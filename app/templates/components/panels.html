@@ -1,0 +1,172 @@
+{# Reusable Drawer, MetricBlock, ChartWrapper, Tabs, Banner, and Skeleton Macros #}
+
+{% macro drawer(id="drawer", title="", subtitle="", open_var="isDrawerOpen", width="max-w-md") %}
+<div x-show="{{ open_var }}"
+     x-cloak
+     class="fixed inset-0 z-50 overflow-hidden"
+     aria-labelledby="{{ id }}-title"
+     role="dialog"
+     aria-modal="true">
+    <!-- Backdrop -->
+    <div x-show="{{ open_var }}"
+         x-transition:enter="ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @click="{{ open_var }} = false"
+         class="fixed inset-0 bg-black/40 transition-opacity"></div>
+
+    <div class="fixed inset-y-0 right-0 flex pl-10 max-w-full">
+        <!-- Panel content -->
+        <div x-show="{{ open_var }}"
+             x-transition:enter="transform transition ease-out duration-200"
+             x-transition:enter-start="translate-x-full"
+             x-transition:enter-end="translate-x-0"
+             x-transition:leave="transform transition ease-in duration-150"
+             x-transition:leave-start="translate-x-0"
+             x-transition:leave-end="translate-x-full"
+             class="w-screen {{ width }} flex flex-col bg-[var(--bg-surface)] border-l border-[var(--border-color)] shadow-xl">
+            
+            <!-- Drawer Header -->
+            <div class="h-14 flex items-center justify-between px-5 border-b border-[var(--border-color)] bg-[var(--bg-subtle)]">
+                <div class="flex flex-col min-w-0 pr-3">
+                    <h3 id="{{ id }}-title" class="text-xs font-semibold text-[var(--text-main)] truncate">
+                        {{ title }}
+                    </h3>
+                    {% if subtitle %}
+                        <p class="text-[10px] text-[var(--text-muted)] font-mono truncate">{{ subtitle }}</p>
+                    {% endif %}
+                </div>
+                <button type="button"
+                        @click="{{ open_var }} = false"
+                        class="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-surface-hover)] focus:outline-none"
+                        aria-label="Tutup panel">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Drawer Body -->
+            <div class="flex-1 overflow-y-auto p-5 space-y-4">
+                {{ caller() }}
+            </div>
+        </div>
+    </div>
+</div>
+{% endmacro %}
+
+
+{% macro metric_block(title="", value="", unit="", subtitle="", tone="neutral", size="md", id="") %}
+{%- if tone == "success" -%}
+    {%- set border_cls = "border-emerald-200 dark:border-emerald-900" -%}
+    {%- set text_cls = "text-emerald-700 dark:text-emerald-400" -%}
+{%- elif tone == "warning" -%}
+    {%- set border_cls = "border-amber-200 dark:border-amber-900" -%}
+    {%- set text_cls = "text-amber-700 dark:text-amber-400" -%}
+{%- elif tone == "danger" -%}
+    {%- set border_cls = "border-rose-200 dark:border-rose-900" -%}
+    {%- set text_cls = "text-rose-700 dark:text-rose-400" -%}
+{%- elif tone == "primary" -%}
+    {%- set border_cls = "border-blue-200 dark:border-blue-900" -%}
+    {%- set text_cls = "text-blue-700 dark:text-blue-400" -%}
+{%- else -%}
+    {%- set border_cls = "border-[var(--border-color)]" -%}
+    {%- set text_cls = "text-[var(--text-main)]" -%}
+{%- endif -%}
+
+<div {% if id %}id="{{ id }}"{% endif %}
+     class="flex flex-col justify-between p-3.5 rounded border {{ border_cls }} bg-[var(--bg-surface)]">
+    <div class="text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wider select-none">
+        {{ title }}
+    </div>
+    <div class="my-1.5 flex items-baseline gap-1.5 font-mono">
+        <span class="text-xl font-bold tracking-tight {{ text_cls }}">{{ value }}</span>
+        {% if unit %}
+            <span class="text-xs text-[var(--text-muted)] font-normal">{{ unit }}</span>
+        {% endif %}
+    </div>
+    {% if subtitle %}
+        <div class="text-[10px] text-[var(--text-subtle)] font-mono truncate">
+            {{ subtitle }}
+        </div>
+    {% endif %}
+</div>
+{% endmacro %}
+
+
+{% macro chart_wrapper(title="", subtitle="", id="", height_cls="h-44", extra_header="") %}
+<div class="flex flex-col rounded border border-[var(--border-color)] bg-[var(--bg-surface)] p-3.5">
+    <div class="flex items-center justify-between border-b border-[var(--border-color)] pb-2.5 mb-2.5">
+        <div class="flex flex-col">
+            <span class="text-xs font-semibold text-[var(--text-main)]">{{ title }}</span>
+            {% if subtitle %}
+                <span class="text-[10px] text-[var(--text-muted)] font-mono">{{ subtitle }}</span>
+            {% endif %}
+        </div>
+        {% if extra_header %}
+            <div>{{ extra_header | safe }}</div>
+        {% endif %}
+    </div>
+    <div class="relative w-full {{ height_cls }}">
+        {{ caller() }}
+    </div>
+</div>
+{% endmacro %}
+
+
+{% macro tabs(tab_items=[], active_tab="activeTab") %}
+{# tab_items: list of (tab_id, label) #}
+<div class="flex items-center border-b border-[var(--border-color)] gap-6 text-xs font-medium">
+    {% for tid, tlabel in tab_items %}
+        <button type="button"
+                @click="{{ active_tab }} = '{{ tid }}'"
+                :class="{{ active_tab }} === '{{ tid }}' ? 'border-blue-600 text-blue-600 dark:text-blue-400 border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
+                class="pb-2.5 transition-colors focus:outline-none">
+            {{ tlabel }}
+        </button>
+    {% endfor %}
+</div>
+{% endmacro %}
+
+
+{% macro banner(type="info", title="", message="", dismissible=false) %}
+{%- if type == "danger" or type == "error" -%}
+    {%- set bg_cls = "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200" -%}
+{%- elif type == "warning" -%}
+    {%- set bg_cls = "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900 text-amber-800 dark:text-amber-200" -%}
+{%- elif type == "success" -%}
+    {%- set bg_cls = "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200" -%}
+{%- else -%}
+    {%- set bg_cls = "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-900 text-blue-800 dark:text-blue-200" -%}
+{%- endif -%}
+
+<div class="flex items-start gap-2.5 p-3 rounded border text-xs {{ bg_cls }}"
+     {% if dismissible %}x-data="{ visible: true }" x-show="visible"{% endif %}>
+    <div class="flex-1">
+        {% if title %}
+            <div class="font-semibold">{{ title }}</div>
+        {% endif %}
+        <div>{{ message }}</div>
+    </div>
+    {% if dismissible %}
+        <button type="button"
+                @click="visible = false"
+                class="text-current opacity-70 hover:opacity-100 focus:outline-none"
+                aria-label="Tutup">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+        </button>
+    {% endif %}
+</div>
+{% endmacro %}
+
+
+{% macro skeleton(height_cls="h-4", width_cls="w-full") %}
+<div class="animate-pulse bg-zinc-200 dark:bg-zinc-800 rounded {{ height_cls }} {{ width_cls }}"></div>
+{% endmacro %}

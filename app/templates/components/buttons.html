@@ -1,0 +1,75 @@
+{# Reusable Button and IconButton Macros #}
+
+{% macro button(text="", variant="secondary", size="md", type="button", disabled=false, loading=false, id="", onclick="", extra_classes="", icon_left="", icon_right="") %}
+{%- set base_cls = "inline-flex items-center justify-center font-medium select-none transition-colors border focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer" -%}
+
+{# Sizing #}
+{%- if size == "sm" -%}
+    {%- set size_cls = "text-[11px] px-2.5 py-1 gap-1.5 rounded" -%}
+{%- else -%}
+    {%- set size_cls = "text-xs px-3.5 py-1.5 gap-2 rounded" -%}
+{%- endif -%}
+
+{# Variants (Solid, no gradient) #}
+{%- if variant == "primary" -%}
+    {%- set var_cls = "bg-blue-600 hover:bg-blue-700 text-white border-transparent" -%}
+{%- elif variant == "danger" -%}
+    {%- set var_cls = "bg-red-600 hover:bg-red-700 text-white border-transparent" -%}
+{%- elif variant == "ghost" -%}
+    {%- set var_cls = "bg-transparent hover:bg-[var(--bg-surface-hover)] text-[var(--text-muted)] hover:text-[var(--text-main)] border-transparent" -%}
+{%- else -%}
+    {# secondary / outline #}
+    {%- set var_cls = "bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-main)] border-[var(--border-color)]" -%}
+{%- endif -%}
+
+<button type="{{ type }}"
+        {% if id %}id="{{ id }}"{% endif %}
+        {% if onclick %}onclick="{{ onclick }}"{% endif %}
+        {% if disabled or loading %}disabled{% endif %}
+        class="{{ base_cls }} {{ size_cls }} {{ var_cls }} {{ extra_classes }}"
+        {{ kwargs | xmlattr }}>
+    {% if loading %}
+        <svg class="animate-spin -ml-0.5 w-3.5 h-3.5 text-current" viewBox="0 0 24 24" fill="none">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+        </svg>
+    {% elif icon_left %}
+        <span class="w-3.5 h-3.5 flex items-center justify-center">{{ icon_left | safe }}</span>
+    {% endif %}
+    <span>{{ text }}</span>
+    {% if icon_right and not loading %}
+        <span class="w-3.5 h-3.5 flex items-center justify-center">{{ icon_right | safe }}</span>
+    {% endif %}
+</button>
+{% endmacro %}
+
+
+{% macro icon_button(icon="", title="", variant="secondary", size="md", type="button", disabled=false, id="", onclick="", extra_classes="") %}
+{%- set base_cls = "inline-flex items-center justify-center select-none transition-colors border focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer" -%}
+
+{%- if size == "sm" -%}
+    {%- set size_cls = "w-7 h-7 rounded text-xs" -%}
+{%- else -%}
+    {%- set size_cls = "w-8 h-8 rounded text-sm" -%}
+{%- endif -%}
+
+{%- if variant == "ghost" -%}
+    {%- set var_cls = "bg-transparent hover:bg-[var(--bg-surface-hover)] text-[var(--text-muted)] hover:text-[var(--text-main)] border-transparent" -%}
+{%- elif variant == "danger" -%}
+    {%- set var_cls = "bg-transparent hover:bg-red-950/20 text-red-600 border-red-500/20" -%}
+{%- elif variant == "primary" -%}
+    {%- set var_cls = "bg-blue-600 hover:bg-blue-700 text-white border-transparent" -%}
+{%- else -%}
+    {%- set var_cls = "bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-muted)] hover:text-[var(--text-main)] border-[var(--border-color)]" -%}
+{%- endif -%}
+
+<button type="{{ type }}"
+        {% if id %}id="{{ id }}"{% endif %}
+        {% if title %}title="{{ title }}" aria-label="{{ title }}"{% endif %}
+        {% if onclick %}onclick="{{ onclick }}"{% endif %}
+        {% if disabled %}disabled{% endif %}
+        class="{{ base_cls }} {{ size_cls }} {{ var_cls }} {{ extra_classes }}"
+        {{ kwargs | xmlattr }}>
+    <span class="w-4 h-4 flex items-center justify-center">{{ icon | safe }}</span>
+</button>
+{% endmacro %}

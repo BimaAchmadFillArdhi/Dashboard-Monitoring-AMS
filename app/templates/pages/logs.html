@@ -1,0 +1,671 @@
+{% extends "layouts/base.html" %}
+{% import "components/buttons.html" as btn %}
+{% import "components/inputs.html" as form %}
+{% import "components/badges.html" as badge %}
+{% import "components/tables.html" as tbl %}
+{% import "components/panels.html" as panel %}
+
+{% block content %}
+<div class="space-y-6"
+     x-data="{
+        mode: 'histori', // 'histori' | 'live'
+        date: new Date().toISOString().split('T')[0],
+        level: 'ALL',
+        streamId: 'ALL',
+        appName: 'ALL',
+        searchQuery: '',
+        dedupe: false,
+        showTechnical: false,
+        fingerprintFilter: '',
+        
+        // Data State
+        logs: [],
+        counts: { ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0, TOTAL: 0 },
+        totalFiltered: 0,
+        hasMore: false,
+        cursor: null,
+        cursorHistory: [],
+        isLoading: false,
+        expandedRows: {},
+        
+        // Live SSE State
+        liveLogs: [],
+        livePaused: false,
+        sseConnected: false,
+        sseSource: null,
+        
+        // Problematic CCTV
+        problematicStreams: [],
+        showProblematicPanel: true,
+        
+        init() {
+            // Check URL parameters for direct filtering
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('stream_id')) {
+                this.streamId = urlParams.get('stream_id');
+            }
+            if (urlParams.get('level')) {
+                this.level = urlParams.get('level');
+            }
+            
+            this.fetchLogs();
+            this.fetchProblematicCCTV();
+        },
+        
+        async fetchLogs(resetCursor = true) {
+            this.isLoading = true;
+            if (resetCursor) {
+                this.cursor = null;
+                this.cursorHistory = [];
+            }
+            
+            const params = new URLSearchParams();
+            if (this.date) params.append('date', this.date);
+            if (this.level && this.level !== 'ALL') params.append('level', this.level);
+            if (this.streamId && this.streamId !== 'ALL') params.append('stream_id', this.streamId);
+            if (this.appName && this.appName !== 'ALL') params.append('app_name', this.appName);
+            if (this.searchQuery.trim()) params.append('q', this.searchQuery.trim());
+            if (this.fingerprintFilter) params.append('fingerprint', this.fingerprintFilter);
+            params.append('dedupe', this.dedupe);
+            if (this.cursor) params.append('cursor', this.cursor);
+            params.append('limit', '30');
+            
+            try {
+                const res = await fetch(`/api/logs?${params.toString()}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    this.logs = data.entries;
+                    this.counts = data.counts;
+                    this.totalFiltered = data.total_filtered;
+                    this.hasMore = data.has_more;
+                    this.nextCursor = data.next_cursor;
+                }
+            } catch (err) {
+                console.error('Gagal mengambil data log:', err);
+            } finally {
+                this.isLoading = false;
+            }
+        },
+        
+        async fetchProblematicCCTV() {
+            try {
+                const res = await fetch('/api/logs/problematic-cctv');
+                if (res.ok) {
+                    this.problematicStreams = await res.json();
+                    // Update badge on sidebar if exists
+                    const badgeEl = document.getElementById('sidebar-logs-warn-badge');
+                    if (badgeEl && this.problematicStreams.length > 0) {
+                        badgeEl.innerText = this.problematicStreams.length;
+                        badgeEl.classList.remove('hidden');
+                    }
+                }
+            } catch (err) {
+                console.error('Gagal memuat CCTV bermasalah:', err);
+            }
+        },
+        
+        nextPage() {
+            if (this.nextCursor) {
+                this.cursorHistory.push(this.cursor);
+                this.cursor = this.nextCursor;
+                this.fetchLogs(false);
+            }
+        },
+        
+        prevPage() {
+            if (this.cursorHistory.length > 0) {
+                this.cursor = this.cursorHistory.pop();
+                this.fetchLogs(false);
+            }
+        },
+        
+        filterByCamera(sid) {
+            this.streamId = sid;
+            this.mode = 'histori';
+            this.fingerprintFilter = '';
+            this.fetchLogs(true);
+        },
+        
+        filterByFingerprint(fp) {
+            this.fingerprintFilter = fp;
+            this.dedupe = false;
+            this.fetchLogs(true);
+        },
+        
+        clearFingerprintFilter() {
+            this.fingerprintFilter = '';
+            this.fetchLogs(true);
+        },
+        
+        exportCSV() {
+            const params = new URLSearchParams();
+            if (this.date) params.append('date', this.date);
+            if (this.level && this.level !== 'ALL') params.append('level', this.level);
+            if (this.streamId && this.streamId !== 'ALL') params.append('stream_id', this.streamId);
+            if (this.searchQuery.trim()) params.append('q', this.searchQuery.trim());
+            window.location.href = `/api/logs/export.csv?${params.toString()}`;
+        },
+        
+        toggleRow(id) {
+            this.expandedRows[id] = !this.expandedRows[id];
+        },
+        
+        // SSE Live Stream Handlers
+        startLiveSSE() {
+            if (this.sseSource) return;
+            this.sseSource = new EventSource('/api/logs/live-sse');
+            this.sseConnected = true;
+            
+            this.sseSource.onmessage = (event) => {
+                if (this.livePaused) return;
+                try {
+                    const payload = JSON.parse(event.data);
+                    if (payload.type === 'log') {
+                        this.liveLogs.unshift(payload.data);
+                        if (this.liveLogs.length > 200) {
+                            this.liveLogs.pop();
+                        }
+                    }
+                } catch (e) {}
+            };
+            
+            this.sseSource.onerror = () => {
+                this.sseConnected = false;
+                if (this.sseSource) {
+                    this.sseSource.close();
+                    this.sseSource = null;
+                }
+                // Retry after 3s
+                setTimeout(() => {
+                    if (this.mode === 'live') this.startLiveSSE();
+                }, 3000);
+            };
+        },
+        
+        stopLiveSSE() {
+            if (this.sseSource) {
+                this.sseSource.close();
+                this.sseSource = null;
+            }
+            this.sseConnected = false;
+        },
+        
+        switchMode(newMode) {
+            this.mode = newMode;
+            if (newMode === 'live') {
+                this.startLiveSSE();
+            } else {
+                this.stopLiveSSE();
+                this.fetchLogs(true);
+            }
+        }
+     }">
+
+    <!-- MODE TABS & LIVE STATUS HEADER -->
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-[var(--border-color)] pb-3">
+        <div class="flex items-center gap-6">
+            <button type="button"
+                    @click="switchMode('histori')"
+                    :class="mode === 'histori' ? 'border-blue-600 text-blue-600 dark:text-blue-400 border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
+                    class="pb-2 text-xs transition-colors cursor-pointer focus:outline-none">
+                Histori Log &amp; Arsip
+            </button>
+            <button type="button"
+                    @click="switchMode('live')"
+                    :class="mode === 'live' ? 'border-blue-600 text-blue-600 dark:text-blue-400 border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
+                    class="pb-2 text-xs transition-colors cursor-pointer focus:outline-none flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full" :class="sseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'"></span>
+                <span>Live Streaming Log (Real-time)</span>
+            </button>
+        </div>
+
+        <div class="flex items-center gap-2.5">
+            <template x-if="mode === 'live'">
+                <div class="flex items-center gap-2">
+                    <button type="button"
+                            @click="livePaused = !livePaused"
+                            class="px-2.5 py-1 text-[11px] font-medium rounded border border-[var(--border-color)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-main)] cursor-pointer">
+                        <span x-text="livePaused ? 'Lanjutkan (Follow)' : 'Jeda (Pause)'"></span>
+                    </button>
+                    <button type="button"
+                            @click="liveLogs = []"
+                            class="px-2.5 py-1 text-[11px] font-medium rounded border border-[var(--border-color)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-muted)] cursor-pointer">
+                        Bersihkan Layar
+                    </button>
+                </div>
+            </template>
+
+            <template x-if="mode === 'histori'">
+                <button type="button"
+                        @click="exportCSV()"
+                        class="inline-flex items-center gap-1.5 px-3 py-1 text-[11px] font-medium rounded border border-[var(--border-color)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-main)] cursor-pointer">
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    <span>Ekspor CSV</span>
+                </button>
+            </template>
+        </div>
+    </div>
+
+    <!-- PANEL CCTV BERMASALAH (DETEKSI OTOMATIS) -->
+    <template x-if="problematicStreams.length > 0">
+        <div class="rounded border border-amber-300 dark:border-amber-900 bg-amber-50/50 dark:bg-amber-950/20 p-4 space-y-3">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+                    <h3 class="text-xs font-bold text-amber-900 dark:text-amber-200">
+                        CCTV Bermasalah / Memerlukan Perhatian (<span x-text="problematicStreams.length"></span> kamera)
+                    </h3>
+                </div>
+                <button type="button"
+                        @click="showProblematicPanel = !showProblematicPanel"
+                        class="text-[11px] font-mono text-amber-800 dark:text-amber-300 hover:underline">
+                    <span x-text="showProblematicPanel ? 'Sembunyikan' : 'Tampilkan'"></span>
+                </button>
+            </div>
+
+            <div x-show="showProblematicPanel" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+                <template x-for="p in problematicStreams" :key="p.stream_id">
+                    <div class="p-3 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] flex flex-col justify-between space-y-2">
+                        <div class="space-y-1">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="font-mono text-xs font-bold text-[var(--text-main)] truncate" x-text="p.stream_id"></span>
+                                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                                      :class="p.status === 'Bermasalah' ? 'bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800' : 'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800'"
+                                      x-text="p.status"></span>
+                            </div>
+                            <p class="text-[11px] text-[var(--text-main)] line-clamp-2" x-text="p.problem_summary"></p>
+                        </div>
+                        <div class="pt-2 border-t border-[var(--border-color)] flex items-center justify-between text-[10px] text-[var(--text-muted)] font-mono">
+                            <div>Kejadian: <strong class="text-[var(--text-main)]" x-text="p.total_events"></strong> (5m: <span x-text="p.warns_5m + p.errors_5m"></span>)</div>
+                            <button type="button"
+                                    @click="filterByCamera(p.stream_id)"
+                                    class="text-blue-600 dark:text-blue-400 hover:underline cursor-pointer font-sans font-medium">
+                                Filter Kamera &rarr;
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </template>
+
+    <!-- FILTER BAR (HISTORI MODE) -->
+    <div x-show="mode === 'histori'" class="space-y-3 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] p-4">
+        <!-- Row 1: Date, Search, CCTV Filter -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+                <label class="text-[11px] font-medium text-[var(--text-main)] block mb-1">Pilih Tanggal Log:</label>
+                <input type="date"
+                       x-model="date"
+                       @change="fetchLogs(true)"
+                       class="h-8 w-full px-2.5 text-xs font-mono rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-blue-500">
+            </div>
+
+            <div>
+                <label class="text-[11px] font-medium text-[var(--text-main)] block mb-1">Cari Pesan / CCTV:</label>
+                <div class="relative">
+                    <input type="text"
+                           x-model="searchQuery"
+                           @keyup.enter="fetchLogs(true)"
+                           placeholder="Cari kata kunci..."
+                           class="h-8 w-full pl-7 pr-2.5 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] placeholder-[var(--text-subtle)] focus:outline-none focus:ring-1 focus:ring-blue-500">
+                    <div class="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none text-[var(--text-muted)]">
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"/>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <label class="text-[11px] font-medium text-[var(--text-main)] block mb-1">CCTV / Stream ID:</label>
+                <select x-model="streamId"
+                        @change="fetchLogs(true)"
+                        class="h-8 w-full px-2 text-xs font-mono rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer">
+                    <option value="ALL">Semua Kamera / Stream</option>
+                    <option value="TC-DemenGlagah-VSS">TC-DemenGlagah-VSS</option>
+                    <option value="APMD.stream">APMD.stream</option>
+                    <option value="ATCS_pingit.stream">ATCS_pingit.stream</option>
+                    <option value="cctv_sma1_depan">cctv_sma1_depan</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="text-[11px] font-medium text-[var(--text-main)] block mb-1">Aplikasi AMS:</label>
+                <select x-model="appName"
+                        @change="fetchLogs(true)"
+                        class="h-8 w-full px-2 text-xs font-mono rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer">
+                    <option value="ALL">Semua Aplikasi</option>
+                    <option value="atcs">atcs</option>
+                    <option value="atcs-kota">atcs-kota</option>
+                    <option value="cctv-sekolah">cctv-sekolah</option>
+                    <option value="LiveApp">LiveApp</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Row 2: Level Filters with Real DB Counts & Toggles -->
+        <div class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[var(--border-color)]">
+            <!-- Level Buttons with Total DB Counts -->
+            <div class="flex flex-wrap items-center gap-1.5 text-xs">
+                <button type="button"
+                        @click="level = 'ALL'; fetchLogs(true)"
+                        :class="level === 'ALL' ? 'bg-blue-600 text-white font-semibold' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                        class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer flex items-center gap-1.5">
+                    <span>Semua</span>
+                    <span class="font-mono text-[10px]" x-text="counts.TOTAL || 0"></span>
+                </button>
+
+                <button type="button"
+                        @click="level = 'ERROR'; fetchLogs(true)"
+                        :class="level === 'ERROR' ? 'bg-rose-600 text-white font-semibold' : 'bg-[var(--bg-subtle)] text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40'"
+                        class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer flex items-center gap-1.5">
+                    <span>ERROR</span>
+                    <span class="font-mono text-[10px] font-bold" x-text="counts.ERROR || 0"></span>
+                </button>
+
+                <button type="button"
+                        @click="level = 'WARN'; fetchLogs(true)"
+                        :class="level === 'WARN' ? 'bg-amber-600 text-white font-semibold' : 'bg-[var(--bg-subtle)] text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40'"
+                        class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer flex items-center gap-1.5">
+                    <span>WARN</span>
+                    <span class="font-mono text-[10px] font-bold" x-text="counts.WARN || 0"></span>
+                </button>
+
+                <button type="button"
+                        @click="level = 'INFO'; fetchLogs(true)"
+                        :class="level === 'INFO' ? 'bg-blue-600 text-white font-semibold' : 'bg-[var(--bg-subtle)] text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40'"
+                        class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer flex items-center gap-1.5">
+                    <span>INFO</span>
+                    <span class="font-mono text-[10px]" x-text="counts.INFO || 0"></span>
+                </button>
+
+                <button type="button"
+                        @click="level = 'DEBUG'; fetchLogs(true)"
+                        :class="level === 'DEBUG' ? 'bg-zinc-700 text-white font-semibold' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)]'"
+                        class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer flex items-center gap-1.5">
+                    <span>DEBUG</span>
+                    <span class="font-mono text-[10px]" x-text="counts.DEBUG || 0"></span>
+                </button>
+            </div>
+
+            <!-- Toggles: Deduplication & Show Technical -->
+            <div class="flex items-center gap-5">
+                <label class="inline-flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox"
+                           x-model="dedupe"
+                           @change="fetchLogs(true)"
+                           class="w-3.5 h-3.5 rounded text-blue-600 border-[var(--border-color)] focus:ring-0 cursor-pointer">
+                    <span class="text-xs font-medium text-[var(--text-main)]">Gabungkan log berulang</span>
+                </label>
+
+                <label class="inline-flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox"
+                           x-model="showTechnical"
+                           class="w-3.5 h-3.5 rounded text-blue-600 border-[var(--border-color)] focus:ring-0 cursor-pointer">
+                    <span class="text-xs font-medium text-[var(--text-main)]">Pesan teknis mentah</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Active Filter Indicator for Fingerprint -->
+        <template x-if="fingerprintFilter">
+            <div class="flex items-center justify-between p-2 rounded bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-xs">
+                <div class="flex items-center gap-2">
+                    <span class="font-semibold text-blue-800 dark:text-blue-300">Menampilkan seluruh kejadian untuk pola log ini:</span>
+                    <span class="font-mono text-[11px] text-[var(--text-muted)]" x-text="fingerprintFilter"></span>
+                </div>
+                <button type="button"
+                        @click="clearFingerprintFilter()"
+                        class="text-blue-600 dark:text-blue-400 hover:underline font-medium">
+                    Hapus Filter Pola &times;
+                </button>
+            </div>
+        </template>
+    </div>
+
+    <!-- TABLE HISTORI LOG -->
+    <div x-show="mode === 'histori'" class="space-y-3">
+        <div class="overflow-x-auto rounded border border-[var(--border-color)] bg-[var(--bg-surface)]">
+            <table class="w-full text-left text-xs border-collapse">
+                <thead>
+                    <tr class="border-b border-[var(--border-color)] bg-[var(--bg-subtle)] text-[11px] font-semibold text-[var(--text-muted)] select-none">
+                        <th class="px-3.5 py-2.5 w-28">Waktu</th>
+                        <th class="px-3.5 py-2.5 w-20">Level</th>
+                        <th class="px-3.5 py-2.5 w-48">CCTV / Stream</th>
+                        <th class="px-3.5 py-2.5">Penjelasan Awam (Bahasa Indonesia)</th>
+                        <th class="px-3.5 py-2.5 w-28 text-right">Status</th>
+                    </tr>
+                </thead>
+
+                <!-- Loading State -->
+                <tbody x-show="isLoading && logs.length === 0">
+                    <tr>
+                        <td colspan="5" class="px-4 py-12 text-center text-[var(--text-muted)]">
+                            <div class="inline-flex items-center gap-2 text-xs">
+                                <svg class="animate-spin w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                                </svg>
+                                <span>Mengambil histori log dari database SQLite...</span>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+
+                <!-- Empty State -->
+                <tbody x-show="!isLoading && logs.length === 0">
+                    <tr>
+                        <td colspan="5" class="px-4 py-12 text-center">
+                            <div class="flex flex-col items-center justify-center max-w-sm mx-auto">
+                                <h4 class="text-xs font-semibold text-[var(--text-main)]">Tidak ada entri log ditemukan</h4>
+                                <p class="text-[11px] text-[var(--text-muted)] mt-1">Coba sesuaikan tanggal, kata kunci pencarian, atau tingkat level log.</p>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+
+                <!-- Log Rows -->
+                <tbody x-show="logs.length > 0">
+                    <template x-for="log in logs" :key="log.id">
+                        <tr class="border-b border-[var(--border-color)] hover:bg-[var(--bg-surface-hover)] transition-colors"
+                            :class="log.level === 'ERROR' ? 'bg-red-50/20 dark:bg-red-950/10' : ''">
+                            
+                            <!-- Waktu & Expand Toggle -->
+                            <td class="px-3.5 py-2.5 font-mono text-[11px] text-[var(--text-muted)] align-top whitespace-nowrap">
+                                <div class="flex items-center gap-1.5">
+                                    <button type="button"
+                                            @click="toggleRow(log.id)"
+                                            class="p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--text-main)] cursor-pointer">
+                                        <svg class="w-3.5 h-3.5 transition-transform"
+                                             :class="expandedRows[log.id] ? 'rotate-90' : ''"
+                                             viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polyline points="9 18 15 12 9 6"/>
+                                        </svg>
+                                    </button>
+                                    <span x-text="log.time_formatted"></span>
+                                </div>
+                            </td>
+
+                            <!-- Level Badge -->
+                            <td class="px-3.5 py-2.5 align-top whitespace-nowrap">
+                                <span class="inline-flex items-center px-1.5 py-0.5 rounded font-mono font-bold text-[10px]"
+                                      :class="{
+                                          'bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800': log.level === 'ERROR',
+                                          'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800': log.level === 'WARN',
+                                          'bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800': log.level === 'INFO',
+                                          'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700': log.level === 'DEBUG'
+                                      }"
+                                      x-text="log.level"></span>
+                            </td>
+
+                            <!-- CCTV / Stream ID -->
+                            <td class="px-3.5 py-2.5 align-top">
+                                <div class="flex flex-col">
+                                    <button type="button"
+                                            @click="filterByCamera(log.stream_id)"
+                                            class="font-mono text-[11px] font-semibold text-[var(--text-main)] hover:text-blue-600 text-left truncate cursor-pointer"
+                                            x-text="log.stream_id || 'Sistem AMS'"></button>
+                                    <span class="text-[10px] text-[var(--text-muted)] font-mono" x-text="log.app_name || '-'"></span>
+                                </div>
+                            </td>
+
+                            <!-- Penjelasan Awam (Bahasa Indonesia) -->
+                            <td class="px-3.5 py-2.5 align-top space-y-1">
+                                <div class="text-[12px] font-medium text-[var(--text-main)]"
+                                     x-text="log.friendly_message || log.friendly_title || log.raw_message"></div>
+
+                                <!-- Repeating Count Badge (Deduplikasi) -->
+                                <template x-if="log.repeat_count > 1">
+                                    <div class="flex items-center gap-2 pt-0.5">
+                                        <span class="px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[10px] font-mono font-semibold border border-amber-200 dark:border-amber-800">
+                                            Terjadi <span x-text="log.repeat_count"></span> kali (pertama: <span x-text="log.first_seen_time"></span>, terakhir: <span x-text="log.last_seen_time"></span>)
+                                        </span>
+                                        <button type="button"
+                                                @click="filterByFingerprint(log.fingerprint)"
+                                                class="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-medium cursor-pointer">
+                                            Tampilkan semua kejadian
+                                        </button>
+                                    </div>
+                                </template>
+
+                                <!-- Technical Raw Message Inline (if toggle active) -->
+                                <template x-if="showTechnical">
+                                    <div class="text-[10px] font-mono text-[var(--text-muted)] break-all bg-[var(--bg-subtle)] p-1.5 rounded border border-[var(--border-color)]"
+                                         x-text="log.raw_message"></div>
+                                </template>
+
+                                <!-- Expanded Drawer with Saran Tindakan & Raw Text -->
+                                <div x-show="expandedRows[log.id]" x-cloak class="mt-2.5 p-3 rounded bg-[var(--bg-subtle)] border border-[var(--border-color)] space-y-2 text-xs">
+                                    <template x-if="log.action_hint">
+                                        <div class="p-2 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200">
+                                            <strong>Saran Tindakan:</strong> <span x-text="log.action_hint"></span>
+                                        </div>
+                                    </template>
+                                    <div class="space-y-1">
+                                        <div class="text-[10px] font-mono text-[var(--text-muted)] uppercase">Pesan Mentah Sistem (Raw Message):</div>
+                                        <div class="p-2 rounded bg-[var(--bg-app)] border border-[var(--border-color)] font-mono text-[11px] text-[var(--text-muted)] break-all select-all whitespace-pre-wrap"
+                                             x-text="log.raw_message"></div>
+                                    </div>
+                                    <div class="text-[10px] text-[var(--text-subtle)] font-mono flex items-center justify-between">
+                                        <span>Logger: <span x-text="log.logger || '-'"></span></span>
+                                        <span>Fingerprint: <span x-text="log.fingerprint"></span></span>
+                                    </div>
+                                </div>
+                            </td>
+
+                            <!-- Status Pill -->
+                            <td class="px-3.5 py-2.5 align-top text-right whitespace-nowrap">
+                                <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium border"
+                                      :class="{
+                                          'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800': log.severity_group === 'masalah',
+                                          'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800': log.severity_group === 'perhatian',
+                                          'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800': log.severity_group === 'info',
+                                          'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700': log.severity_group === 'tidak_dikenal'
+                                      }">
+                                    <span class="w-1.5 h-1.5 rounded-full"
+                                          :class="{
+                                              'bg-red-500': log.severity_group === 'masalah',
+                                              'bg-amber-500': log.severity_group === 'perhatian',
+                                              'bg-emerald-500': log.severity_group === 'info',
+                                              'bg-zinc-400': log.severity_group === 'tidak_dikenal'
+                                          }"></span>
+                                    <span x-text="log.severity_group === 'masalah' ? 'Bermasalah' : (log.severity_group === 'perhatian' ? 'Perhatian' : (log.severity_group === 'info' ? 'Info' : 'Lainnya'))"></span>
+                                </span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination Controls -->
+        <div class="flex items-center justify-between px-3.5 py-2.5 border rounded border-[var(--border-color)] bg-[var(--bg-surface)] text-xs text-[var(--text-muted)]">
+            <div class="font-mono text-[11px]">
+                Total <span class="font-semibold text-[var(--text-main)]" x-text="totalFiltered"></span> entri
+                <span x-show="dedupe" class="text-amber-600 dark:text-amber-400 ml-1">(Deduplikasi aktif)</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <button type="button"
+                        @click="prevPage()"
+                        :disabled="cursorHistory.length === 0"
+                        class="px-2.5 py-1 text-[11px] font-medium rounded border border-[var(--border-color)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-main)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
+                    Sebelumnya
+                </button>
+                <button type="button"
+                        @click="nextPage()"
+                        :disabled="!hasMore"
+                        class="px-2.5 py-1 text-[11px] font-medium rounded border border-[var(--border-color)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-main)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
+                    Berikutnya
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- LIVE STREAMING MODE VIEW -->
+    <div x-show="mode === 'live'" class="space-y-3">
+        <div class="flex items-center justify-between p-3 rounded border border-emerald-300 dark:border-emerald-900 bg-emerald-50/40 dark:bg-emerald-950/20 text-xs">
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full" :class="sseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'"></span>
+                <span class="font-semibold text-emerald-900 dark:text-emerald-200" x-text="sseConnected ? 'Aliran SSE Live Aktif' : 'Terputus - Menghubungkan ulang...'"></span>
+                <span class="text-[11px] text-[var(--text-muted)] font-mono">(Menampilkan 200 baris terbaru secara real-time tanpa refresh manual)</span>
+            </div>
+            <div class="font-mono text-[11px] text-[var(--text-muted)]">
+                Status: <strong :class="livePaused ? 'text-amber-600' : 'text-emerald-600'" x-text="livePaused ? 'PAUSED' : 'FOLLOWING'"></strong>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto rounded border border-[var(--border-color)] bg-[var(--bg-surface)]">
+            <table class="w-full text-left text-xs border-collapse font-mono">
+                <thead>
+                    <tr class="border-b border-[var(--border-color)] bg-[var(--bg-subtle)] text-[11px] font-semibold text-[var(--text-muted)]">
+                        <th class="px-3.5 py-2.5 w-24">Waktu</th>
+                        <th class="px-3.5 py-2.5 w-20">Level</th>
+                        <th class="px-3.5 py-2.5 w-48">CCTV / Stream</th>
+                        <th class="px-3.5 py-2.5">Penjelasan Awam</th>
+                        <th class="px-3.5 py-2.5 w-24 text-right">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-[var(--border-color)]">
+                    <template x-if="liveLogs.length === 0">
+                        <tr>
+                            <td colspan="5" class="px-4 py-12 text-center text-[var(--text-muted)] font-sans">
+                                Menunggu aliran log masuk dari Ant Media Server...
+                            </td>
+                        </tr>
+                    </template>
+                    <template x-for="log in liveLogs" :key="log.id">
+                        <tr class="hover:bg-[var(--bg-surface-hover)] transition-colors"
+                            :class="log.level === 'ERROR' ? 'bg-red-50/20 dark:bg-red-950/20' : ''">
+                            <td class="px-3.5 py-2 text-[11px] text-[var(--text-muted)] whitespace-nowrap" x-text="log.time_formatted"></td>
+                            <td class="px-3.5 py-2 whitespace-nowrap">
+                                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold"
+                                      :class="{
+                                          'bg-red-100 text-red-700': log.level === 'ERROR',
+                                          'bg-amber-100 text-amber-700': log.level === 'WARN',
+                                          'bg-blue-100 text-blue-700': log.level === 'INFO',
+                                          'bg-zinc-100 text-zinc-600': log.level === 'DEBUG'
+                                      }"
+                                      x-text="log.level"></span>
+                            </td>
+                            <td class="px-3.5 py-2 font-semibold text-[var(--text-main)] truncate" x-text="log.stream_id || 'System'"></td>
+                            <td class="px-3.5 py-2 font-sans text-xs text-[var(--text-main)]" x-text="log.friendly_message || log.raw_message"></td>
+                            <td class="px-3.5 py-2 text-right whitespace-nowrap font-sans">
+                                <span class="text-[11px] font-medium"
+                                      :class="log.severity_group === 'masalah' ? 'text-red-600' : (log.severity_group === 'perhatian' ? 'text-amber-600' : 'text-emerald-600')"
+                                      x-text="log.severity_group === 'masalah' ? 'Bermasalah' : (log.severity_group === 'perhatian' ? 'Perhatian' : 'Info')"></span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

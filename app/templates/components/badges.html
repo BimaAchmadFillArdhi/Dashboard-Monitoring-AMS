@@ -1,0 +1,54 @@
+{# Reusable Badge and StatusPill Macros #}
+
+{% macro badge(text="", tone="neutral", size="sm", extra_classes="") %}
+{%- if size == "xs" -%}
+    {%- set size_cls = "text-[9.5px] px-1.5 py-0.5 rounded" -%}
+{%- else -%}
+    {%- set size_cls = "text-[10.5px] px-2 py-0.5 rounded" -%}
+{%- endif -%}
+
+{%- if tone == "success" or tone == "healthy" -%}
+    {%- set tone_cls = "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800" -%}
+{%- elif tone == "warning" or tone == "perhatian" -%}
+    {%- set tone_cls = "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800" -%}
+{%- elif tone == "danger" or tone == "bermasalah" or tone == "error" -%}
+    {%- set tone_cls = "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800" -%}
+{%- elif tone == "info" or tone == "primary" -%}
+    {%- set tone_cls = "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800" -%}
+{%- else -%}
+    {%- set tone_cls = "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700" -%}
+{%- endif -%}
+
+<span class="inline-flex items-center font-mono font-medium {{ size_cls }} {{ tone_cls }} {{ extra_classes }}">
+    {{ text }}
+</span>
+{% endmacro %}
+
+
+{% macro status_pill(status="", custom_label=None, size="sm") %}
+{%- set s = status | lower -%}
+
+{%- if s in ['healthy', 'sehat', 'broadcasting', 'live'] -%}
+    {%- set label = custom_label or 'Sehat' -%}
+    {%- set dot_cls = "bg-emerald-500" -%}
+    {%- set pill_cls = "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800" -%}
+{%- elif s in ['warning', 'perhatian', 'warn'] -%}
+    {%- set label = custom_label or 'Perhatian' -%}
+    {%- set dot_cls = "bg-amber-500" -%}
+    {%- set pill_cls = "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800" -%}
+{%- elif s in ['danger', 'bermasalah', 'error'] -%}
+    {%- set label = custom_label or 'Bermasalah' -%}
+    {%- set dot_cls = "bg-rose-500" -%}
+    {%- set pill_cls = "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800" -%}
+{%- else -%}
+    {# offline, finished, created, info, debug, unknown #}
+    {%- set label = custom_label or (s | capitalize if s else 'Offline') -%}
+    {%- set dot_cls = "bg-zinc-400 dark:bg-zinc-500" -%}
+    {%- set pill_cls = "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700" -%}
+{%- endif -%}
+
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium border {{ pill_cls }}">
+    <span class="w-1.5 h-1.5 rounded-full {{ dot_cls }}"></span>
+    <span>{{ label }}</span>
+</span>
+{% endmacro %}

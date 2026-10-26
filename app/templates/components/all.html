@@ -1,0 +1,101 @@
+{# Barrel file exporting all design system components #}
+{% import "components/buttons.html" as buttons with context %}
+{% import "components/inputs.html" as inputs with context %}
+{% import "components/badges.html" as badges with context %}
+{% import "components/tables.html" as tables with context %}
+{% import "components/panels.html" as panels with context %}
+
+{# Button aliases #}
+{% macro button(text="", variant="secondary", size="md", type="button", disabled=false, loading=false, id="", onclick="", extra_classes="", icon_left="", icon_right="") %}
+    {{ buttons.button(text, variant, size, type, disabled, loading, id, onclick, extra_classes, icon_left, icon_right, **kwargs) }}
+{% endmacro %}
+
+{% macro icon_button(icon="", title="", variant="secondary", size="md", type="button", disabled=false, id="", onclick="", extra_classes="") %}
+    {{ buttons.icon_button(icon, title, variant, size, type, disabled, id, onclick, extra_classes, **kwargs) }}
+{% endmacro %}
+
+{# Input aliases #}
+{% macro input(label="", name="", type="text", value="", placeholder="", hint="", error="", id="", required=false, disabled=false, readonly=false, extra_classes="") %}
+    {{ inputs.input(label, name, type, value, placeholder, hint, error, id, required, disabled, readonly, extra_classes, **kwargs) }}
+{% endmacro %}
+
+{% macro select(label="", name="", options=[], selected_value="", id="", required=false, disabled=false, hint="", extra_classes="") %}
+    {{ inputs.select(label, name, options, selected_value, id, required, disabled, hint, extra_classes, **kwargs) }}
+{% endmacro %}
+
+{% macro date_picker(label="", name="", value="", min="", max="", id="", required=false, disabled=false, hint="", extra_classes="") %}
+    {{ inputs.date_picker(label, name, value, min, max, id, required, disabled, hint, extra_classes, **kwargs) }}
+{% endmacro %}
+
+{% macro search_field(name="q", placeholder="Cari stream atau pesan log...", value="", id="", extra_classes="") %}
+    {{ inputs.search_field(name, placeholder, value, id, extra_classes, **kwargs) }}
+{% endmacro %}
+
+{% macro toggle(label="", name="", checked=false, id="", x_model="", onchange="", disabled=false, hint="") %}
+    {{ inputs.toggle(label, name, checked, id, x_model, onchange, disabled, hint, **kwargs) }}
+{% endmacro %}
+
+{# Badge & Status aliases #}
+{% macro badge(text="", tone="neutral", size="sm", extra_classes="") %}
+    {{ badges.badge(text, tone, size, extra_classes, **kwargs) }}
+{% endmacro %}
+
+{% macro status_pill(status="", custom_label=None, size="sm") %}
+    {{ badges.status_pill(status, custom_label, size, **kwargs) }}
+{% endmacro %}
+
+{# Table aliases #}
+{% macro table_wrapper(id="", extra_classes="") %}
+    {% call tables.table_wrapper(id, extra_classes) %}
+        {{ caller() }}
+    {% endcall %}
+{% endmacro %}
+
+{% macro table_header(columns=[]) %}
+    {{ tables.table_header(columns) }}
+{% endmacro %}
+
+{% macro table_empty(title="Tidak ada data", description="Belum ada data yang cocok dengan kriteria filter saat ini.", colspan=6) %}
+    {{ tables.table_empty(title, description, colspan) }}
+{% endmacro %}
+
+{% macro table_loading(text="Memuat data...", colspan=6) %}
+    {{ tables.table_loading(text, colspan) }}
+{% endmacro %}
+
+{% macro table_error(title="Gagal memuat data", message="Terjadi kesalahan jaringan atau server.", retry_onclick="", colspan=6) %}
+    {{ tables.table_error(title, message, retry_onclick, colspan) }}
+{% endmacro %}
+
+{% macro pagination(page=1, total_pages=1, total_items=0, per_page=20, on_prev="", on_next="") %}
+    {{ tables.pagination(page, total_pages, total_items, per_page, on_prev, on_next) }}
+{% endmacro %}
+
+{# Panel aliases #}
+{% macro drawer(id="drawer", title="", subtitle="", open_var="isDrawerOpen", width="max-w-md") %}
+    {% call panels.drawer(id, title, subtitle, open_var, width) %}
+        {{ caller() }}
+    {% endcall %}
+{% endmacro %}
+
+{% macro metric_block(title="", value="", unit="", subtitle="", tone="neutral", size="md", id="") %}
+    {{ panels.metric_block(title, value, unit, subtitle, tone, size, id) }}
+{% endmacro %}
+
+{% macro chart_wrapper(title="", subtitle="", id="", height_cls="h-44", extra_header="") %}
+    {% call panels.chart_wrapper(title, subtitle, id, height_cls, extra_header) %}
+        {{ caller() }}
+    {% endcall %}
+{% endmacro %}
+
+{% macro tabs(tab_items=[], active_tab="activeTab") %}
+    {{ panels.tabs(tab_items, active_tab) }}
+{% endmacro %}
+
+{% macro banner(type="info", title="", message="", dismissible=false) %}
+    {{ panels.banner(type, title, message, dismissible) }}
+{% endmacro %}
+
+{% macro skeleton(height_cls="h-4", width_cls="w-full") %}
+    {{ panels.skeleton(height_cls, width_cls) }}
+{% endmacro %}

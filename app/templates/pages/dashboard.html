@@ -1,0 +1,404 @@
+{% extends "layouts/base.html" %}
+{% import "components/buttons.html" as btn %}
+{% import "components/badges.html" as badge %}
+{% import "components/tables.html" as tbl %}
+{% import "components/panels.html" as panel %}
+
+{% block content %}
+<div class="space-y-6"
+     x-data="{
+        connected: true,
+        versionName: '3.1.0',
+        versionType: 'Community Edition',
+        uptimeStr: '-',
+        serverTime: '',
+        
+        // Metrics
+        cpuPercent: 0,
+        cpuLoadAvg: 0,
+        sysMemUsedGb: 0,
+        sysMemTotalGb: 0,
+        sysMemPercent: 0,
+        jvmHeapUsedMb: 0,
+        jvmHeapMaxMb: 0,
+        jvmHeapPercent: 0,
+        diskUsedGb: 0,
+        diskTotalGb: 0,
+        diskFreeGb: 0,
+        diskPercent: 0,
+        totalLiveStreams: 0,
+        totalViewers: 0,
+        webrtcViewers: 0,
+        hlsViewers: 0,
+        dashViewers: 0,
+        dbQueryMs: 0,
+        applications: [],
+        
+        // Heartbeat & Stale tracking
+        secondsSinceUpdate: 0,
+        isStale: false,
+        sseSource: null,
+        
+        // Charts
+        cpuChart: null,
+        memChart: null,
+        streamChart: null,
+        
+        init() {
+            this.initCharts();
+            this.connectSSE();
+            
+            // Timer for 'data diperbarui X detik lalu'
+            setInterval(() => {
+                this.secondsSinceUpdate++;
+                this.isStale = this.secondsSinceUpdate > 10;
+            }, 1000);
+        },
+        
+        connectSSE() {
+            if (this.sseSource) return;
+            this.sseSource = new EventSource('/api/dashboard/sse');
+            
+            this.sseSource.onmessage = (event) => {
+                try {
+                    const d = JSON.parse(event.data);
+                    this.applySnapshot(d);
+                    this.secondsSinceUpdate = 0;
+                    this.isStale = false;
+                } catch (e) {}
+            };
+            
+            this.sseSource.onerror = () => {
+                this.connected = false;
+                if (this.sseSource) {
+                    this.sseSource.close();
+                    this.sseSource = null;
+                }
+                setTimeout(() => this.connectSSE(), 3000);
+            };
+        },
+        
+        applySnapshot(d) {
+            this.connected = d.ams_connected;
+            this.versionName = d.version_name;
+            this.versionType = d.version_type;
+            this.uptimeStr = d.uptime_formatted;
+            this.serverTime = d.server_time;
+            
+            this.cpuPercent = d.cpu_percent;
+            this.cpuLoadAvg = d.cpu_load_avg;
+            
+            this.sysMemUsedGb = d.system_memory_used_gb;
+            this.sysMemTotalGb = d.system_memory_total_gb;
+            this.sysMemPercent = d.system_memory_percent;
+            
+            this.jvmHeapUsedMb = d.jvm_heap_used_mb;
+            this.jvmHeapMaxMb = d.jvm_heap_max_mb;
+            this.jvmHeapPercent = d.jvm_heap_percent;
+            
+            this.diskUsedGb = d.disk_used_gb;
+            this.diskTotalGb = d.disk_total_gb;
+            this.diskFreeGb = d.disk_free_gb;
+            this.diskPercent = d.disk_percent;
+            
+            this.totalLiveStreams = d.total_live_streams;
+            this.totalViewers = d.total_viewers;
+            this.webrtcViewers = d.webrtc_viewers;
+            this.hlsViewers = d.hls_viewers;
+            this.dashViewers = d.dash_viewers;
+            this.dbQueryMs = d.db_query_avg_ms;
+            this.applications = d.applications || [];
+            
+            // Update charts with history
+            if (d.history && this.cpuChart && this.memChart && this.streamChart) {
+                const labels = d.history.timestamps || [];
+                
+                // CPU Chart
+                this.cpuChart.data.labels = labels;
+                this.cpuChart.data.datasets[0].data = d.history.cpu || [];
+                this.cpuChart.update('none');
+                
+                // Memory Chart
+                this.memChart.data.labels = labels;
+                this.memChart.data.datasets[0].data = d.history.memory_system || [];
+                this.memChart.data.datasets[1].data = d.history.jvm_heap || [];
+                this.memChart.update('none');
+                
+                // Streams Chart
+                this.streamChart.data.labels = labels;
+                this.streamChart.data.datasets[0].data = d.history.live_streams || [];
+                this.streamChart.data.datasets[1].data = d.history.viewers || [];
+                this.streamChart.update('none');
+            }
+        },
+        
+        initCharts() {
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                elements: {
+                    line: { tension: 0.2, borderWidth: 2 },
+                    point: { radius: 0 }
+                },
+                scales: {
+                    x: {
+                        display: false,
+                        grid: { display: false }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(128, 128, 128, 0.1)' },
+                        ticks: { font: { family: 'monospace', size: 9 }, color: '#888' }
+                    }
+                },
+                plugins: {
+                    legend: { display: false }
+                }
+            };
+            
+            // 1. CPU Sparkline
+            const ctxCpu = document.getElementById('chart-cpu')?.getContext('2d');
+            if (ctxCpu) {
+                this.cpuChart = new Chart(ctxCpu, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: 'CPU %',
+                            data: [],
+                            borderColor: '#2563eb', // solid blue
+                            backgroundColor: 'transparent',
+                        }]
+                    },
+                    options: chartOptions
+                });
+            }
+            
+            // 2. Memory Sparkline
+            const ctxMem = document.getElementById('chart-mem')?.getContext('2d');
+            if (ctxMem) {
+                this.memChart = new Chart(ctxMem, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [
+                            {
+                                label: 'System RAM %',
+                                data: [],
+                                borderColor: '#16a34a', // solid green
+                                backgroundColor: 'transparent',
+                            },
+                            {
+                                label: 'JVM Heap MB',
+                                data: [],
+                                borderColor: '#d97706', // solid amber
+                                backgroundColor: 'transparent',
+                            }
+                        ]
+                    },
+                    options: chartOptions
+                });
+            }
+            
+            // 3. Streams & Viewers Sparkline
+            const ctxStream = document.getElementById('chart-stream')?.getContext('2d');
+            if (ctxStream) {
+                this.streamChart = new Chart(ctxStream, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [
+                            {
+                                label: 'Live Streams',
+                                data: [],
+                                borderColor: '#0891b2', // solid cyan
+                                backgroundColor: 'transparent',
+                            },
+                            {
+                                label: 'Viewers',
+                                data: [],
+                                borderColor: '#9333ea', // solid purple
+                                backgroundColor: 'transparent',
+                            }
+                        ]
+                    },
+                    options: chartOptions
+                });
+            }
+        }
+     }">
+
+    <!-- TOP SYSTEM STATUS & UPTIME BAR -->
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)]">
+        <div class="flex flex-wrap items-center gap-4 text-xs">
+            <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full" :class="connected ? 'bg-emerald-500' : 'bg-rose-500'"></span>
+                <span class="font-semibold text-[var(--text-main)]" x-text="connected ? 'Ant Media Server Aktif' : 'Server AMS Tidak Terhubung'"></span>
+            </div>
+            <span class="h-3 w-px bg-[var(--border-color)]"></span>
+            <div class="font-mono text-[var(--text-muted)]">
+                Versi: <strong class="text-[var(--text-main)]" x-text="versionName + ' (' + versionType + ')'"></strong>
+            </div>
+            <span class="h-3 w-px bg-[var(--border-color)]"></span>
+            <div class="font-mono text-[var(--text-muted)]">
+                Uptime: <strong class="text-[var(--text-main)]" x-text="uptimeStr"></strong>
+            </div>
+            <span class="h-3 w-px bg-[var(--border-color)]"></span>
+            <div class="font-mono text-[var(--text-muted)]">
+                DB Query: <strong class="text-[var(--text-main)]" x-text="dbQueryMs + ' ms'"></strong>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2 text-[11px] font-mono">
+            <template x-if="isStale">
+                <span class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-medium">
+                    Data Stale (Tidak Ada Pembaruan)
+                </span>
+            </template>
+            <span class="text-[var(--text-muted)]">
+                Diperbarui <span class="font-semibold text-[var(--text-main)]" x-text="secondsSinceUpdate"></span> detik lalu
+            </span>
+        </div>
+    </div>
+
+    <!-- METRIC BLOCKS & SPARKLINE CHARTS (Varied hierarchy, NOT identical cards grid) -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <!-- 1. CPU Block with Chart -->
+        <div class="p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] flex flex-col justify-between space-y-3">
+            <div class="flex items-center justify-between border-b border-[var(--border-color)] pb-2">
+                <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">System CPU</span>
+                <span class="text-[10px] font-mono text-[var(--text-muted)]">Load 1m: <strong x-text="cpuLoadAvg"></strong></span>
+            </div>
+            <div class="flex items-baseline gap-2 font-mono">
+                <span class="text-3xl font-bold text-blue-600 dark:text-blue-400" x-text="cpuPercent"></span>
+                <span class="text-sm font-medium text-[var(--text-muted)]">%</span>
+            </div>
+            <!-- Sparkline -->
+            <div class="h-24 w-full relative">
+                <canvas id="chart-cpu"></canvas>
+            </div>
+            <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right">Riwayat beban 5 menit terakhir</div>
+        </div>
+
+        <!-- 2. Memory & JVM Block with Chart -->
+        <div class="p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] flex flex-col justify-between space-y-3">
+            <div class="flex items-center justify-between border-b border-[var(--border-color)] pb-2">
+                <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">Memory &amp; Heap JVM</span>
+                <span class="text-[10px] font-mono text-[var(--text-muted)]" x-text="sysMemUsedGb + ' GB / ' + sysMemTotalGb + ' GB'"></span>
+            </div>
+            <div class="flex items-baseline justify-between font-mono">
+                <div>
+                    <span class="text-3xl font-bold text-emerald-600 dark:text-emerald-400" x-text="sysMemPercent"></span>
+                    <span class="text-sm font-medium text-[var(--text-muted)]">% RAM</span>
+                </div>
+                <div class="text-right">
+                    <span class="text-lg font-bold text-amber-600 dark:text-amber-400" x-text="jvmHeapUsedMb"></span>
+                    <span class="text-xs text-[var(--text-muted)]">MB Heap</span>
+                </div>
+            </div>
+            <!-- Sparkline -->
+            <div class="h-24 w-full relative">
+                <canvas id="chart-mem"></canvas>
+            </div>
+            <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right">Hijau: Sistem RAM % | Amber: JVM Heap MB</div>
+        </div>
+
+        <!-- 3. Live Streams & Viewers Block with Chart -->
+        <div class="p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] flex flex-col justify-between space-y-3">
+            <div class="flex items-center justify-between border-b border-[var(--border-color)] pb-2">
+                <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">Live Streams &amp; Viewer</span>
+                <span class="text-[10px] font-mono text-[var(--text-muted)]">WebRTC: <strong x-text="webrtcViewers"></strong> | HLS: <strong x-text="hlsViewers"></strong></span>
+            </div>
+            <div class="flex items-baseline justify-between font-mono">
+                <div>
+                    <span class="text-3xl font-bold text-cyan-600 dark:text-cyan-400" x-text="totalLiveStreams"></span>
+                    <span class="text-sm font-medium text-[var(--text-muted)]">Live</span>
+                </div>
+                <div class="text-right">
+                    <span class="text-2xl font-bold text-purple-600 dark:text-purple-400" x-text="totalViewers"></span>
+                    <span class="text-xs text-[var(--text-muted)]">Penonton Total</span>
+                </div>
+            </div>
+            <!-- Sparkline -->
+            <div class="h-24 w-full relative">
+                <canvas id="chart-stream"></canvas>
+            </div>
+            <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right">Cyan: Jumlah Live | Ungu: Total Viewer</div>
+        </div>
+    </div>
+
+    <!-- STORAGE / DISK METRIC SECTION -->
+    <div class="p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] space-y-3">
+        <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">Kapasitas Penyimpanan Disk Server</span>
+            <span class="font-mono text-xs text-[var(--text-muted)]">
+                Terpakai: <strong class="text-[var(--text-main)]" x-text="diskUsedGb + ' GB'"></strong> / <span x-text="diskTotalGb + ' GB'"></span>
+                (Tersisa: <span class="text-emerald-600 font-semibold" x-text="diskFreeGb + ' GB'"></span>)
+            </span>
+        </div>
+        <!-- Disk bar indicator -->
+        <div class="w-full bg-[var(--bg-subtle)] rounded-full h-2.5 overflow-hidden border border-[var(--border-color)]">
+            <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-500" :style="'width: ' + diskPercent + '%'"></div>
+        </div>
+    </div>
+
+    <!-- APPLICATION SUMMARY TABLE -->
+    <div class="space-y-3">
+        <div class="flex items-center justify-between">
+            <div>
+                <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--text-main)] font-mono">Daftar Aplikasi Ant Media Server</h3>
+                <p class="text-[11px] text-[var(--text-muted)] mt-0.5">Ringkasan status kamera dan alokasi penyimpanan per aplikasi.</p>
+            </div>
+            <a href="/applications" class="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline">
+                Lihat Semua di Halaman Applications &rarr;
+            </a>
+        </div>
+
+        <div class="overflow-x-auto rounded border border-[var(--border-color)] bg-[var(--bg-surface)]">
+            <table class="w-full text-left text-xs border-collapse font-sans">
+                <thead>
+                    <tr class="border-b border-[var(--border-color)] bg-[var(--bg-subtle)] text-[11px] font-semibold text-[var(--text-muted)] select-none">
+                        <th class="px-4 py-2.5 w-48">Nama Aplikasi</th>
+                        <th class="px-4 py-2.5 w-32 font-mono">Live Streams</th>
+                        <th class="px-4 py-2.5 w-32 font-mono">VoD Rekaman</th>
+                        <th class="px-4 py-2.5 font-mono">Penyimpanan (MB)</th>
+                        <th class="px-4 py-2.5 w-28 text-right">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-[var(--border-color)]">
+                    <template x-if="applications.length === 0">
+                        <tr>
+                            <td colspan="5" class="px-4 py-8 text-center text-[var(--text-muted)]">
+                                Mengambil daftar aplikasi...
+                            </td>
+                        </tr>
+                    </template>
+                    <template x-for="app in applications" :key="app.name">
+                        <tr class="hover:bg-[var(--bg-surface-hover)] transition-colors">
+                            <td class="px-4 py-3 font-semibold text-[var(--text-main)]">
+                                <a :href="'/applications?app=' + app.name"
+                                   class="hover:text-blue-600 hover:underline flex items-center gap-2">
+                                    <span class="w-2 h-2 rounded-full bg-blue-600"></span>
+                                    <span x-text="app.name"></span>
+                                </a>
+                            </td>
+                            <td class="px-4 py-3 font-mono font-bold"
+                                :class="app.live_count > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-[var(--text-muted)]'"
+                                x-text="app.live_count + ' live'"></td>
+                            <td class="px-4 py-3 font-mono text-[var(--text-muted)]" x-text="app.vod_count + ' file'"></td>
+                            <td class="px-4 py-3 font-mono text-[var(--text-muted)]" x-text="app.storage_mb + ' MB'"></td>
+                            <td class="px-4 py-3 text-right">
+                                <span class="px-2 py-0.5 rounded text-[11px] font-medium border"
+                                      :class="app.live_count > 0 ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700'"
+                                      x-text="app.status"></span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

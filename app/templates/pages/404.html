@@ -1,0 +1,18 @@
+{% extends "layouts/base.html" %}
+
+{% block content %}
+<div class="max-w-md mx-auto text-center py-16 space-y-4">
+    <div class="inline-flex w-12 h-12 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] items-center justify-center text-[var(--text-muted)] font-mono text-base font-bold">
+        404
+    </div>
+    <div class="space-y-1">
+        <h2 class="text-sm font-semibold text-[var(--text-main)]">Halaman Tidak Ditemukan</h2>
+        <p class="text-xs text-[var(--text-muted)]">Halaman atau endpoint yang Anda tuju tidak tersedia.</p>
+    </div>
+    <div>
+        <a href="/" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-700 text-white transition-colors">
+            Kembali ke Dashboard
+        </a>
+    </div>
+</div>
+{% endblock %}

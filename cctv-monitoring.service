@@ -1,0 +1,16 @@
+[Unit]
+Description=CCTV Monitoring Dashboard (Ant Media Server)
+After=network.target
+
+[Service]
+Type=simple
+User=cctv
+Group=cctv
+WorkingDirectory=/opt/cctv-dashboard
+EnvironmentFile=/opt/cctv-dashboard/.env
+ExecStart=/opt/cctv-dashboard/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

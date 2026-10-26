@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="id" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - {{ app_name | default("CCTV Monitoring Dashboard") }}</title>
+    
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem('cctv_theme') || 'dark';
+            if (savedTheme === 'dark') document.documentElement.classList.add('dark');
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body class="h-full bg-[var(--bg-app)] text-[var(--text-main)] flex items-center justify-center p-4">
+
+    <div class="w-full max-w-sm rounded border border-[var(--border-color)] bg-[var(--bg-surface)] p-6 space-y-6 shadow-sm">
+        
+        <!-- Header -->
+        <div class="space-y-1.5 text-center">
+            <div class="inline-flex w-10 h-10 bg-blue-600 rounded items-center justify-center text-white mb-1">
+                <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M23 7l-7 5 7 5V7z"/>
+                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                </svg>
+            </div>
+            <h1 class="text-base font-bold text-[var(--text-main)] tracking-tight">CCTV Monitoring Dashboard</h1>
+            <p class="text-[11px] text-[var(--text-muted)] font-mono">Ant Media Server Community Edition 3.1.0</p>
+        </div>
+
+        <!-- Error Alert -->
+        {% if error %}
+            <div class="p-3 rounded border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 text-xs text-red-700 dark:text-red-400">
+                {{ error }}
+            </div>
+        {% endif %}
+
+        <!-- Login Form -->
+        <form method="POST" action="/login" class="space-y-4">
+            <div class="space-y-1">
+                <label for="username" class="text-xs font-medium text-[var(--text-main)] block">Username</label>
+                <input type="text"
+                       id="username"
+                       name="username"
+                       required
+                       autofocus
+                       autocomplete="username"
+                       class="h-9 w-full px-3 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-blue-500">
+            </div>
+
+            <div class="space-y-1">
+                <label for="password" class="text-xs font-medium text-[var(--text-main)] block">Password</label>
+                <input type="password"
+                       id="password"
+                       name="password"
+                       required
+                       autocomplete="current-password"
+                       class="h-9 w-full px-3 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-blue-500">
+            </div>
+
+            <button type="submit"
+                    class="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500">
+                Masuk ke Dashboard
+            </button>
+        </form>
+
+        <!-- Default Credentials Hint -->
+        <div class="pt-4 border-t border-[var(--border-color)] text-[10px] text-[var(--text-subtle)] font-mono space-y-1">
+            <div>Default Admin: <strong class="text-[var(--text-muted)]">admin</strong> / <strong class="text-[var(--text-muted)]">admin12345</strong></div>
+            <div>Default Operator: <strong class="text-[var(--text-muted)]">operator</strong> / <strong class="text-[var(--text-muted)]">operator12345</strong></div>
+        </div>
+
+    </div>
+
+</body>
+</html>

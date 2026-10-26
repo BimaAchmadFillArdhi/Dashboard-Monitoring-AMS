@@ -1,0 +1,38 @@
+[
+  {
+    "name": "LiveApp",
+    "liveStreamCount": 0,
+    "vodCount": 0,
+    "storage": 30315757
+  },
+  {
+    "name": "WebRTCApp",
+    "liveStreamCount": 0,
+    "vodCount": 0,
+    "storage": 30315767
+  },
+  {
+    "name": "atcs",
+    "liveStreamCount": 1,
+    "vodCount": 0,
+    "storage": 30320216
+  },
+  {
+    "name": "atcs-kota",
+    "liveStreamCount": 0,
+    "vodCount": 0,
+    "storage": 30320242
+  },
+  {
+    "name": "cctv-sekolah",
+    "liveStreamCount": 1,
+    "vodCount": 0,
+    "storage": 36042582
+  },
+  {
+    "name": "live",
+    "liveStreamCount": 0,
+    "vodCount": 0,
+    "storage": 30315742
+  }
+]

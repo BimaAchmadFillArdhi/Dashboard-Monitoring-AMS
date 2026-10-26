@@ -1,0 +1,128 @@
+{# Reusable Input, Select, DatePicker, SearchField, and Toggle Macros #}
+
+{% macro input(label="", name="", type="text", value="", placeholder="", hint="", error="", id="", required=false, disabled=false, readonly=false, extra_classes="") %}
+{%- set input_id = id if id else ("input_" ~ name) -%}
+<div class="flex flex-col gap-1 w-full">
+    {% if label %}
+        <label for="{{ input_id }}" class="text-[11px] font-medium text-[var(--text-main)] flex items-center justify-between">
+            <span>{{ label }}{% if required %}<span class="text-red-500 ml-0.5">*</span>{% endif %}</span>
+            {% if hint %}
+                <span class="text-[10px] text-[var(--text-subtle)] font-normal">{{ hint }}</span>
+            {% endif %}
+        </label>
+    {% endif %}
+    <input type="{{ type }}"
+           id="{{ input_id }}"
+           name="{{ name }}"
+           value="{{ value }}"
+           placeholder="{{ placeholder }}"
+           {% if required %}required{% endif %}
+           {% if disabled %}disabled{% endif %}
+           {% if readonly %}readonly{% endif %}
+           class="h-8 px-2.5 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] placeholder-[var(--text-subtle)] focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors {{ extra_classes }}"
+           {{ kwargs | xmlattr }}>
+    {% if error %}
+        <span class="text-[10px] text-red-500">{{ error }}</span>
+    {% endif %}
+</div>
+{% endmacro %}
+
+
+{% macro select(label="", name="", options=[], selected_value="", id="", required=false, disabled=false, hint="", extra_classes="") %}
+{%- set select_id = id if id else ("select_" ~ name) -%}
+<div class="flex flex-col gap-1 w-full">
+    {% if label %}
+        <label for="{{ select_id }}" class="text-[11px] font-medium text-[var(--text-main)] flex items-center justify-between">
+            <span>{{ label }}{% if required %}<span class="text-red-500 ml-0.5">*</span>{% endif %}</span>
+            {% if hint %}
+                <span class="text-[10px] text-[var(--text-subtle)] font-normal">{{ hint }}</span>
+            {% endif %}
+        </label>
+    {% endif %}
+    <select id="{{ select_id }}"
+            name="{{ name }}"
+            {% if required %}required{% endif %}
+            {% if disabled %}disabled{% endif %}
+            class="h-8 px-2.5 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer {{ extra_classes }}"
+            {{ kwargs | xmlattr }}>
+        {% for val, opt_label in options %}
+            <option value="{{ val }}" {% if val|string == selected_value|string %}selected{% endif %}>
+                {{ opt_label }}
+            </option>
+        {% endfor %}
+    </select>
+</div>
+{% endmacro %}
+
+
+{% macro date_picker(label="", name="", value="", min="", max="", id="", required=false, disabled=false, hint="", extra_classes="") %}
+{%- set picker_id = id if id else ("dp_" ~ name) -%}
+<div class="flex flex-col gap-1">
+    {% if label %}
+        <label for="{{ picker_id }}" class="text-[11px] font-medium text-[var(--text-main)] flex items-center justify-between">
+            <span>{{ label }}{% if required %}<span class="text-red-500 ml-0.5">*</span>{% endif %}</span>
+            {% if hint %}
+                <span class="text-[10px] text-[var(--text-subtle)] font-normal">{{ hint }}</span>
+            {% endif %}
+        </label>
+    {% endif %}
+    <div class="relative">
+        <input type="date"
+               id="{{ picker_id }}"
+               name="{{ name }}"
+               value="{{ value }}"
+               {% if min %}min="{{ min }}"{% endif %}
+               {% if max %}max="{{ max }}"{% endif %}
+               {% if required %}required{% endif %}
+               {% if disabled %}disabled{% endif %}
+               class="h-8 px-2.5 text-xs font-mono rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50 transition-colors {{ extra_classes }}"
+               {{ kwargs | xmlattr }}>
+    </div>
+</div>
+{% endmacro %}
+
+
+{% macro search_field(name="q", placeholder="Cari stream atau pesan log...", value="", id="", extra_classes="") %}
+{%- set field_id = id if id else ("search_" ~ name) -%}
+<div class="relative w-full max-w-sm">
+    <div class="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-[var(--text-muted)]">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+    </div>
+    <input type="text"
+           id="{{ field_id }}"
+           name="{{ name }}"
+           value="{{ value }}"
+           placeholder="{{ placeholder }}"
+           class="h-8 w-full pl-8 pr-3 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] placeholder-[var(--text-subtle)] focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors {{ extra_classes }}"
+           {{ kwargs | xmlattr }}>
+</div>
+{% endmacro %}
+
+
+{% macro toggle(label="", name="", checked=false, id="", x_model="", onchange="", disabled=false, hint="") %}
+{%- set toggle_id = id if id else ("toggle_" ~ name) -%}
+<label for="{{ toggle_id }}" class="inline-flex items-center gap-2.5 cursor-pointer select-none">
+    <div class="relative">
+        <input type="checkbox"
+               id="{{ toggle_id }}"
+               name="{{ name }}"
+               {% if checked %}checked{% endif %}
+               {% if x_model %}x-model="{{ x_model }}"{% endif %}
+               {% if onchange %}onchange="{{ onchange }}"{% endif %}
+               {% if disabled %}disabled{% endif %}
+               class="sr-only peer">
+        <div class="w-8 h-4 bg-zinc-300 dark:bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-600"></div>
+    </div>
+    {% if label %}
+        <div class="flex flex-col">
+            <span class="text-xs font-medium text-[var(--text-main)]">{{ label }}</span>
+            {% if hint %}
+                <span class="text-[10px] text-[var(--text-subtle)] leading-tight">{{ hint }}</span>
+            {% endif %}
+        </div>
+    {% endif %}
+</label>
+{% endmacro %}

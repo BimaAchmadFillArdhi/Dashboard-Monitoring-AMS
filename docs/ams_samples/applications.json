@@ -1,0 +1,10 @@
+{
+  "applications": [
+    "LiveApp",
+    "WebRTCApp",
+    "atcs",
+    "atcs-kota",
+    "cctv-sekolah",
+    "live"
+  ]
+}

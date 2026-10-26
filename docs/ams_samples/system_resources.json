@@ -1,0 +1,64 @@
+{
+  "instanceId": "14a283d56c7ead981e2b05a31996be39",
+  "cpuUsage": {
+    "processCPUTime": 6020050000,
+    "systemCPULoad": 40,
+    "processCPULoad": 0,
+    "systemLoadAverageLastMinute": 10.45703125
+  },
+  "jvmMemoryUsage": {
+    "maxMemory": 16248733696,
+    "totalMemory": 671088640,
+    "freeMemory": 457860320,
+    "inUseMemory": 213228320
+  },
+  "systemInfo": {
+    "osName": "Linux",
+    "osArch": "amd64",
+    "javaVersion": "21",
+    "processorCount": 24
+  },
+  "systemMemoryInfo": {
+    "virtualMemory": 33925951488,
+    "totalMemory": 64990806016,
+    "freeMemory": 6263906304,
+    "inUseMemory": 58726899712,
+    "totalSwapSpace": 8589930496,
+    "freeSwapSpace": 8575684608,
+    "inUseSwapSpace": 14245888,
+    "availableMemory": 50009137152
+  },
+  "fileSystemInfo": {
+    "usableSpace": 1078822240256,
+    "totalSpace": 1323131658240,
+    "freeSpace": 1133726801920,
+    "inUseSpace": 189404856320
+  },
+  "jvmNativeMemoryUsage": {
+    "inUseMemory": 3898077184,
+    "maxMemory": 64994934784
+  },
+  "softwareVersion": {
+    "versionName": "3.1.0",
+    "versionType": "Community Edition",
+    "buildNumber": "20260904_1146"
+  },
+  "gpuUsageInfo": [],
+  "ffmpegBuildInfo": "--prefix=.. --disable-iconv --disable-opencl --disable-sdl2 --disable-bzlib --disable-lzma --disable-linux-perf --disable-xlib --disable-decoder=h264_crystalhd --disable-decoder=mpeg2_crystalhd --disable-decoder=vc1_crystalhd --disable-decoder=mpeg4_crystalhd --disable-decoder=msmpeg4_crystalhd --disable-decoder=msmpeg4_crystalhd --disable-decoder=wmv3_crystalhd --enable-shared --enable-version3 --enable-runtime-cpudetect --enable-zlib --enable-libmp3lame --enable-libspeex --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libvo-amrwbenc --enable-openssl --enable-libopenh264 --enable-libvpx --enable-libfreetype --enable-libopus --enable-libxml2 --enable-libsrt --enable-libwebp --enable-libaom --enable-libsvtav1 --enable-libzimg --enable-libmfx --enable-libdrm --enable-cuda --enable-cuvid --enable-nvenc --enable-pthreads --enable-libxcb --enable-libpulse --cc='gcc -m64' --extra-cflags='-I../include/ -I../include/libxml2 -I../include/mfx -I../include/svt-av1' --extra-ldflags=-L../lib/ --extra-libs='-lstdc++ -lpthread -ldl -lz -lm -lva-drm -lva-x11 -lva'",
+  "dbAverageQueryTimeMs": 1,
+  "localWebRTCLiveStreams": -6,
+  "localLiveStreams": 2,
+  "localWebRTCViewers": 0,
+  "localHLSViewers": 0,
+  "localDASHViewers": 0,
+  "encoders-blocked": 0,
+  "encoders-not-opened": 0,
+  "publish-timeout-errors": 0,
+  "vertx-worker-thread-queue-size": 0,
+  "webrtc-vertx-worker-thread-queue-size": 0,
+  "server-timing": {
+    "up-time": 287928636,
+    "start-time": 1792712268064
+  },
+  "totalLiveStreamSize": 2
+}
