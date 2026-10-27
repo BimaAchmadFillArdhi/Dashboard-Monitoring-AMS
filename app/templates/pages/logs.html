@@ -206,13 +206,13 @@
         <div class="flex items-center gap-6">
             <button type="button"
                     @click="switchMode('histori')"
-                    :class="mode === 'histori' ? 'border-blue-600 text-blue-600 dark:text-blue-400 border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
+                    :class="mode === 'histori' ? 'border-[var(--accent)] text-[var(--accent-text)] border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
                     class="pb-2 text-xs transition-colors cursor-pointer focus:outline-none">
                 Histori Log &amp; Arsip
             </button>
             <button type="button"
                     @click="switchMode('live')"
-                    :class="mode === 'live' ? 'border-blue-600 text-blue-600 dark:text-blue-400 border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
+                    :class="mode === 'live' ? 'border-[var(--accent)] text-[var(--accent-text)] border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
                     class="pb-2 text-xs transition-colors cursor-pointer focus:outline-none flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-full" :class="sseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'"></span>
                 <span>Live Streaming Log (Real-time)</span>
@@ -283,7 +283,7 @@
                             <div>Kejadian: <strong class="text-[var(--text-main)]" x-text="p.total_events"></strong> (5m: <span x-text="p.warns_5m + p.errors_5m"></span>)</div>
                             <button type="button"
                                     @click="filterByCamera(p.stream_id)"
-                                    class="text-blue-600 dark:text-blue-400 hover:underline cursor-pointer font-sans font-medium">
+                                    class="text-[var(--accent-text)] hover:underline cursor-pointer font-sans font-medium">
                                 Filter Kamera &rarr;
                             </button>
                         </div>
@@ -302,7 +302,7 @@
                 <input type="date"
                        x-model="date"
                        @change="fetchLogs(true)"
-                       class="h-8 w-full px-2.5 text-xs font-mono rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-blue-500">
+                       class="h-8 w-full px-2.5 text-xs font-mono rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]">
             </div>
 
             <div>
@@ -312,7 +312,7 @@
                            x-model="searchQuery"
                            @keyup.enter="fetchLogs(true)"
                            placeholder="Cari kata kunci..."
-                           class="h-8 w-full pl-7 pr-2.5 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] placeholder-[var(--text-subtle)] focus:outline-none focus:ring-1 focus:ring-blue-500">
+                           class="h-8 w-full pl-7 pr-2.5 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] placeholder-[var(--text-subtle)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]">
                     <div class="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none text-[var(--text-muted)]">
                         <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="11" cy="11" r="8"/>
@@ -326,7 +326,7 @@
                 <label class="text-[11px] font-medium text-[var(--text-main)] block mb-1">CCTV / Stream ID:</label>
                 <select x-model="streamId"
                         @change="fetchLogs(true)"
-                        class="h-8 w-full px-2 text-xs font-mono rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer">
+                        class="h-8 w-full px-2 text-xs font-mono rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] cursor-pointer">
                     <option value="ALL">Semua Kamera / Stream</option>
                     <option value="TC-DemenGlagah-VSS">TC-DemenGlagah-VSS</option>
                     <option value="APMD.stream">APMD.stream</option>
@@ -339,7 +339,7 @@
                 <label class="text-[11px] font-medium text-[var(--text-main)] block mb-1">Aplikasi AMS:</label>
                 <select x-model="appName"
                         @change="fetchLogs(true)"
-                        class="h-8 w-full px-2 text-xs font-mono rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer">
+                        class="h-8 w-full px-2 text-xs font-mono rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] cursor-pointer">
                     <option value="ALL">Semua Aplikasi</option>
                     <option value="atcs">atcs</option>
                     <option value="atcs-kota">atcs-kota</option>
@@ -355,7 +355,7 @@
             <div class="flex flex-wrap items-center gap-1.5 text-xs">
                 <button type="button"
                         @click="level = 'ALL'; fetchLogs(true)"
-                        :class="level === 'ALL' ? 'bg-blue-600 text-white font-semibold' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                        :class="level === 'ALL' ? 'bg-[var(--accent)] text-white font-semibold' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
                         class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer flex items-center gap-1.5">
                     <span>Semua</span>
                     <span class="font-mono text-[10px]" x-text="counts.TOTAL || 0"></span>
@@ -379,7 +379,7 @@
 
                 <button type="button"
                         @click="level = 'INFO'; fetchLogs(true)"
-                        :class="level === 'INFO' ? 'bg-blue-600 text-white font-semibold' : 'bg-[var(--bg-subtle)] text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40'"
+                        :class="level === 'INFO' ? 'bg-[var(--accent)] text-white font-semibold' : 'bg-[var(--bg-subtle)] text-[var(--accent-text)] hover:bg-[var(--accent-soft)]'"
                         class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer flex items-center gap-1.5">
                     <span>INFO</span>
                     <span class="font-mono text-[10px]" x-text="counts.INFO || 0"></span>
@@ -400,14 +400,14 @@
                     <input type="checkbox"
                            x-model="dedupe"
                            @change="fetchLogs(true)"
-                           class="w-3.5 h-3.5 rounded text-blue-600 border-[var(--border-color)] focus:ring-0 cursor-pointer">
+                           class="w-3.5 h-3.5 rounded text-[var(--accent)] border-[var(--border-color)] focus:ring-0 cursor-pointer">
                     <span class="text-xs font-medium text-[var(--text-main)]">Gabungkan log berulang</span>
                 </label>
 
                 <label class="inline-flex items-center gap-2 cursor-pointer select-none">
                     <input type="checkbox"
                            x-model="showTechnical"
-                           class="w-3.5 h-3.5 rounded text-blue-600 border-[var(--border-color)] focus:ring-0 cursor-pointer">
+                           class="w-3.5 h-3.5 rounded text-[var(--accent)] border-[var(--border-color)] focus:ring-0 cursor-pointer">
                     <span class="text-xs font-medium text-[var(--text-main)]">Pesan teknis mentah</span>
                 </label>
             </div>
@@ -415,14 +415,14 @@
 
         <!-- Active Filter Indicator for Fingerprint -->
         <template x-if="fingerprintFilter">
-            <div class="flex items-center justify-between p-2 rounded bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-xs">
+            <div class="flex items-center justify-between p-2 rounded bg-[var(--accent-soft)] border border-[var(--accent-border)] text-xs">
                 <div class="flex items-center gap-2">
-                    <span class="font-semibold text-blue-800 dark:text-blue-300">Menampilkan seluruh kejadian untuk pola log ini:</span>
+                    <span class="font-semibold text-[var(--accent-text)]">Menampilkan seluruh kejadian untuk pola log ini:</span>
                     <span class="font-mono text-[11px] text-[var(--text-muted)]" x-text="fingerprintFilter"></span>
                 </div>
                 <button type="button"
                         @click="clearFingerprintFilter()"
-                        class="text-blue-600 dark:text-blue-400 hover:underline font-medium">
+                        class="text-[var(--accent-text)] hover:underline font-medium">
                     Hapus Filter Pola &times;
                 </button>
             </div>
@@ -448,7 +448,7 @@
                     <tr>
                         <td colspan="5" class="px-4 py-12 text-center text-[var(--text-muted)]">
                             <div class="inline-flex items-center gap-2 text-xs">
-                                <svg class="animate-spin w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none">
+                                <svg class="animate-spin w-4 h-4 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
                                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
                                 </svg>
@@ -498,7 +498,7 @@
                                       :class="{
                                           'bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800': log.level === 'ERROR',
                                           'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800': log.level === 'WARN',
-                                          'bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800': log.level === 'INFO',
+                                          'bg-[var(--accent-soft)] text-[var(--accent-text)] border border-[var(--accent-border)]': log.level === 'INFO',
                                           'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700': log.level === 'DEBUG'
                                       }"
                                       x-text="log.level"></span>
@@ -509,7 +509,7 @@
                                 <div class="flex flex-col">
                                     <button type="button"
                                             @click="filterByCamera(log.stream_id)"
-                                            class="font-mono text-[11px] font-semibold text-[var(--text-main)] hover:text-blue-600 text-left truncate cursor-pointer"
+                                            class="font-mono text-[11px] font-semibold text-[var(--text-main)] hover:text-[var(--accent-text)] text-left truncate cursor-pointer"
                                             x-text="log.stream_id || 'Sistem AMS'"></button>
                                     <span class="text-[10px] text-[var(--text-muted)] font-mono" x-text="log.app_name || '-'"></span>
                                 </div>
@@ -528,7 +528,7 @@
                                         </span>
                                         <button type="button"
                                                 @click="filterByFingerprint(log.fingerprint)"
-                                                class="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-medium cursor-pointer">
+                                                class="text-[10px] text-[var(--accent-text)] hover:underline font-medium cursor-pointer">
                                             Tampilkan semua kejadian
                                         </button>
                                     </div>
@@ -648,7 +648,7 @@
                                       :class="{
                                           'bg-red-100 text-red-700': log.level === 'ERROR',
                                           'bg-amber-100 text-amber-700': log.level === 'WARN',
-                                          'bg-blue-100 text-blue-700': log.level === 'INFO',
+                                          'bg-[var(--accent-soft)] text-[var(--accent-text)]': log.level === 'INFO',
                                           'bg-zinc-100 text-zinc-600': log.level === 'DEBUG'
                                       }"
                                       x-text="log.level"></span>

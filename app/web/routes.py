@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Response, Form, Depends, HTTPException
+from fastapi import APIRouter, Request, Form, Depends
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
@@ -91,7 +91,6 @@ async def dashboard_page(request: Request):
             "title": f"Dashboard - {settings.APP_NAME}",
             "page_title": "Dashboard Sistem",
             "active_page": "dashboard",
-            "debug": settings.DEBUG,
             "user": user,
         },
     )
@@ -107,7 +106,6 @@ async def applications_page(request: Request):
             "title": f"Applications - {settings.APP_NAME}",
             "page_title": "Daftar Aplikasi",
             "active_page": "applications",
-            "debug": settings.DEBUG,
             "user": user,
         },
     )
@@ -123,23 +121,6 @@ async def logs_page(request: Request):
             "title": f"Logs - {settings.APP_NAME}",
             "page_title": "Log & CCTV Bermasalah",
             "active_page": "logs",
-            "debug": settings.DEBUG,
-            "user": user,
-        },
-    )
-
-
-@router.get("/_styleguide")
-async def styleguide_page(request: Request):
-    user = await get_optional_user(request)
-    return templates.TemplateResponse(
-        request=request,
-        name="pages/styleguide.html",
-        context={
-            "title": f"Styleguide - {settings.APP_NAME}",
-            "page_title": "Styleguide Sistem Desain",
-            "active_page": "styleguide",
-            "debug": settings.DEBUG,
             "user": user,
         },
     )

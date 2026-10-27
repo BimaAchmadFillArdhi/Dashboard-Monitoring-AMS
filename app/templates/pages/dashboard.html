@@ -167,7 +167,7 @@
                         datasets: [{
                             label: 'CPU %',
                             data: [],
-                            borderColor: '#2563eb', // solid blue
+                            borderColor: '#0c828c', // solid teal
                             backgroundColor: 'transparent',
                         }]
                     },
@@ -236,11 +236,6 @@
                 <span class="w-2.5 h-2.5 rounded-full" :class="connected ? 'bg-emerald-500' : 'bg-rose-500'"></span>
                 <span class="font-semibold text-[var(--text-main)]" x-text="connected ? 'Ant Media Server Aktif' : 'Server AMS Tidak Terhubung'"></span>
             </div>
-            <span class="h-3 w-px bg-[var(--border-color)]"></span>
-            <div class="font-mono text-[var(--text-muted)]">
-                Versi: <strong class="text-[var(--text-main)]" x-text="versionName + ' (' + versionType + ')'"></strong>
-            </div>
-            <span class="h-3 w-px bg-[var(--border-color)]"></span>
             <div class="font-mono text-[var(--text-muted)]">
                 Uptime: <strong class="text-[var(--text-main)]" x-text="uptimeStr"></strong>
             </div>
@@ -271,7 +266,7 @@
                 <span class="text-[10px] font-mono text-[var(--text-muted)]">Load 1m: <strong x-text="cpuLoadAvg"></strong></span>
             </div>
             <div class="flex items-baseline gap-2 font-mono">
-                <span class="text-3xl font-bold text-blue-600 dark:text-blue-400" x-text="cpuPercent"></span>
+                <span class="text-3xl font-bold text-[var(--accent-text)]" x-text="cpuPercent"></span>
                 <span class="text-sm font-medium text-[var(--text-muted)]">%</span>
             </div>
             <!-- Sparkline -->
@@ -324,7 +319,7 @@
             <div class="h-24 w-full relative">
                 <canvas id="chart-stream"></canvas>
             </div>
-            <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right">Cyan: Jumlah Live | Ungu: Total Viewer</div>
+            <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right">Teal: Jumlah Live | Ungu: Total Viewer</div>
         </div>
     </div>
 
@@ -339,7 +334,7 @@
         </div>
         <!-- Disk bar indicator -->
         <div class="w-full bg-[var(--bg-subtle)] rounded-full h-2.5 overflow-hidden border border-[var(--border-color)]">
-            <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-500" :style="'width: ' + diskPercent + '%'"></div>
+            <div class="bg-[var(--accent)] h-2.5 rounded-full transition-all duration-500" :style="'width: ' + diskPercent + '%'"></div>
         </div>
     </div>
 
@@ -350,7 +345,7 @@
                 <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--text-main)] font-mono">Daftar Aplikasi Ant Media Server</h3>
                 <p class="text-[11px] text-[var(--text-muted)] mt-0.5">Ringkasan status kamera dan alokasi penyimpanan per aplikasi.</p>
             </div>
-            <a href="/applications" class="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline">
+            <a href="/applications" class="text-xs font-medium text-[var(--accent-text)] hover:underline">
                 Lihat Semua di Halaman Applications &rarr;
             </a>
         </div>
@@ -378,8 +373,8 @@
                         <tr class="hover:bg-[var(--bg-surface-hover)] transition-colors">
                             <td class="px-4 py-3 font-semibold text-[var(--text-main)]">
                                 <a :href="'/applications?app=' + app.name"
-                                   class="hover:text-blue-600 hover:underline flex items-center gap-2">
-                                    <span class="w-2 h-2 rounded-full bg-blue-600"></span>
+                                   class="hover:text-[var(--accent-text)] hover:underline flex items-center gap-2">
+                                    <span class="w-2 h-2 rounded-full bg-[var(--accent)]"></span>
                                     <span x-text="app.name"></span>
                                 </a>
                             </td>

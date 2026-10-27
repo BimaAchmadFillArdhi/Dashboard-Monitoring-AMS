@@ -37,7 +37,7 @@ Dashboard monitoring CCTV operasional untuk operator non-teknis yang terintegras
 - **Backend**: Python 3.11+, FastAPI, httpx (async), Pydantic v2, SQLAlchemy 2.x + SQLite (WAL mode).
 - **Frontend**: Jinja2 templates, Tailwind CSS (CLI v4), Alpine.js, Chart.js.
 - **Real-Time**: Server-Sent Events (SSE).
-- **Sistem Desain**: Jinja macros reusable di `app/templates/components/`, halaman katalog di `/_styleguide`.
+- **Sistem Desain**: Komponen UI reusable berbasis Jinja macros di `app/templates/components/`.
 
 ---
 
@@ -70,7 +70,7 @@ AMS/
 │   ├── templates/
 │   │   ├── layouts/base.html    # AppShell, Topbar, Sidebar, theme switcher
 │   │   ├── components/          # Macros reusable (buttons, inputs, tables, panels)
-│   │   └── pages/               # dashboard.html, applications.html, logs.html, styleguide.html
+│   │   └── pages/               # dashboard.html, applications.html, logs.html
 │   └── static/                  # CSS terkompilasi, vendor scripts
 ├── docs/
 │   ├── ams_api_notes.md         # Catatan endpoint hasil verifikasi nyata

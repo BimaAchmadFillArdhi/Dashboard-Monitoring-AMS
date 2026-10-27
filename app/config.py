@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     SYNC_DATABASE_URL: str = "sqlite:///./cctv_monitoring.db"
 
     # App Settings
-    APP_NAME: str = "CCTV Monitoring Dashboard"
+    APP_NAME: str = "Wiko AMS"
     APP_ENV: str = "development"
     DEBUG: bool = True
     SECRET_KEY: str = "cctv-monitoring-super-secret-key-2026"

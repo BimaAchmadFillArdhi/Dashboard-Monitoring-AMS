@@ -142,7 +142,7 @@
                     <button type="button"
                             @click="selectApplication(app.name)"
                             class="w-full flex items-center justify-between px-3 py-2 text-xs rounded transition-colors text-left cursor-pointer"
-                            :class="selectedApp === app.name ? 'bg-blue-600 text-white font-semibold' : 'text-[var(--text-main)] hover:bg-[var(--bg-surface-hover)]'">
+                            :class="selectedApp === app.name ? 'bg-[var(--accent-soft)] text-[var(--accent-text)] font-semibold' : 'text-[var(--text-main)] hover:bg-[var(--bg-surface-hover)]'">
                         <div class="flex items-center gap-2 truncate">
                             <span class="w-2 h-2 rounded-full"
                                   :class="selectedApp === app.name ? 'bg-white' : (app.live_count > 0 ? 'bg-emerald-500' : 'bg-zinc-400')"></span>
@@ -171,19 +171,19 @@
                 <div class="flex items-center gap-6">
                     <button type="button"
                             @click="activeTab = 'streams'"
-                            :class="activeTab === 'streams' ? 'border-blue-600 text-blue-600 dark:text-blue-400 border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
+                            :class="activeTab === 'streams' ? 'border-[var(--accent)] text-[var(--accent-text)] border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
                             class="pb-2 text-xs transition-colors cursor-pointer focus:outline-none">
                         Live Streams (<span x-text="streams.length"></span>)
                     </button>
                     <button type="button"
                             @click="activeTab = 'vod'"
-                            :class="activeTab === 'vod' ? 'border-blue-600 text-blue-600 dark:text-blue-400 border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
+                            :class="activeTab === 'vod' ? 'border-[var(--accent)] text-[var(--accent-text)] border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
                             class="pb-2 text-xs transition-colors cursor-pointer focus:outline-none">
                         VoD Rekaman
                     </button>
                     <button type="button"
                             @click="activeTab = 'settings'"
-                            :class="activeTab === 'settings' ? 'border-blue-600 text-blue-600 dark:text-blue-400 border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
+                            :class="activeTab === 'settings' ? 'border-[var(--accent)] text-[var(--accent-text)] border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
                             class="pb-2 text-xs transition-colors cursor-pointer focus:outline-none">
                         Pengaturan (Read-Only)
                     </button>
@@ -195,7 +195,7 @@
                            x-model="searchQuery"
                            @input.debounce.300ms="fetchStreams()"
                            placeholder="Cari kamera atau stream..."
-                           class="h-8 w-full pl-7 pr-2.5 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] placeholder-[var(--text-subtle)] focus:outline-none focus:ring-1 focus:ring-blue-500">
+                           class="h-8 w-full pl-7 pr-2.5 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] placeholder-[var(--text-subtle)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]">
                     <div class="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none text-[var(--text-muted)]">
                         <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="11" cy="11" r="8"/>
@@ -226,7 +226,7 @@
                             <tr>
                                 <td colspan="7" class="px-4 py-12 text-center text-[var(--text-muted)]">
                                     <div class="inline-flex items-center gap-2 text-xs">
-                                        <svg class="animate-spin w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none">
+                                        <svg class="animate-spin w-4 h-4 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
                                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
                                         </svg>
@@ -255,7 +255,7 @@
                                     @click="openDrawer(s.stream_id)">
                                     <td class="px-4 py-3">
                                         <div class="flex flex-col">
-                                            <span class="font-mono text-xs font-bold text-[var(--text-main)] hover:text-blue-600 truncate" x-text="s.stream_id"></span>
+                                            <span class="font-mono text-xs font-bold text-[var(--text-main)] hover:text-[var(--accent-text)] truncate" x-text="s.stream_id"></span>
                                             <span class="text-[10px] text-[var(--text-muted)] truncate" x-text="s.name"></span>
                                         </div>
                                     </td>
@@ -480,7 +480,7 @@
                             <!-- Filter in Logs Button -->
                             <div class="pt-3 border-t border-[var(--border-color)]">
                                 <a :href="'/logs?stream_id=' + encodeURIComponent(selectedStream.stream_id)"
-                                   class="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-surface-hover)] text-blue-600 dark:text-blue-400">
+                                   class="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-surface-hover)] text-[var(--accent-text)]">
                                     <span>Lihat Semua Log Kamera Ini di Halaman Logs</span>
                                     <span>&rarr;</span>
                                 </a>

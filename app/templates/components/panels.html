@@ -71,8 +71,8 @@
     {%- set border_cls = "border-rose-200 dark:border-rose-900" -%}
     {%- set text_cls = "text-rose-700 dark:text-rose-400" -%}
 {%- elif tone == "primary" -%}
-    {%- set border_cls = "border-blue-200 dark:border-blue-900" -%}
-    {%- set text_cls = "text-blue-700 dark:text-blue-400" -%}
+    {%- set border_cls = "border-[var(--accent-border)]" -%}
+    {%- set text_cls = "text-[var(--accent-text)]" -%}
 {%- else -%}
     {%- set border_cls = "border-[var(--border-color)]" -%}
     {%- set text_cls = "text-[var(--text-main)]" -%}
@@ -124,7 +124,7 @@
     {% for tid, tlabel in tab_items %}
         <button type="button"
                 @click="{{ active_tab }} = '{{ tid }}'"
-                :class="{{ active_tab }} === '{{ tid }}' ? 'border-blue-600 text-blue-600 dark:text-blue-400 border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
+                :class="{{ active_tab }} === '{{ tid }}' ? 'border-[var(--accent)] text-[var(--accent-text)] border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
                 class="pb-2.5 transition-colors focus:outline-none">
             {{ tlabel }}
         </button>
@@ -141,7 +141,7 @@
 {%- elif type == "success" -%}
     {%- set bg_cls = "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200" -%}
 {%- else -%}
-    {%- set bg_cls = "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-900 text-blue-800 dark:text-blue-200" -%}
+    {%- set bg_cls = "bg-[var(--accent-soft)] border-[var(--accent-border)] text-[var(--accent-text)]" -%}
 {%- endif -%}
 
 <div class="flex items-start gap-2.5 p-3 rounded border text-xs {{ bg_cls }}"

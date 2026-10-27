@@ -14,7 +14,7 @@
 {%- elif tone == "danger" or tone == "bermasalah" or tone == "error" -%}
     {%- set tone_cls = "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800" -%}
 {%- elif tone == "info" or tone == "primary" -%}
-    {%- set tone_cls = "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800" -%}
+    {%- set tone_cls = "bg-[var(--accent-soft)] text-[var(--accent-text)] border border-[var(--accent-border)]" -%}
 {%- else -%}
     {%- set tone_cls = "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700" -%}
 {%- endif -%}
