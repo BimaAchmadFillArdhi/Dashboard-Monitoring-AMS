@@ -28,3 +28,24 @@ def test_dashboard_metrics_api():
     assert "history" in data
     assert "cpu" in data["history"]
     assert "memory_system" in data["history"]
+
+
+def test_dashboard_history_api():
+    client = TestClient(app)
+    resp = client.get("/api/dashboard/history?hours=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "timestamps" in data
+    assert "cpu" in data
+    assert "memory_system" in data
+
+
+def test_dashboard_server_info_api():
+    client = TestClient(app)
+    resp = client.get("/api/dashboard/server-info")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "ams_connected" in data
+    assert "version_name" in data
+    assert "os_name" in data
+    assert "processor_count" in data

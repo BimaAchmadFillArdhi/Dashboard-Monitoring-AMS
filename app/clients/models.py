@@ -10,6 +10,44 @@ class AMSVersion(BaseModel):
     buildNumber: Optional[str] = None
 
 
+class SystemStatus(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    osName: Optional[str] = "Linux"
+    osArch: Optional[str] = "amd64"
+    javaVersion: Optional[str] = "21"
+    processorCount: Optional[int] = 1
+
+
+class VoDItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    vodId: Optional[str] = None
+    streamName: Optional[str] = None
+    streamId: Optional[str] = None
+    filePath: Optional[str] = None
+    vodName: Optional[str] = None
+    date: Optional[int] = 0
+    duration: Optional[int] = 0
+    fileSize: Optional[int] = 0
+    type: Optional[str] = "userVoD"
+
+    @property
+    def file_size_mb(self) -> float:
+        if self.fileSize and self.fileSize > 0:
+            return round(self.fileSize / (1024 * 1024), 2)
+        return 0.0
+
+    @property
+    def duration_formatted(self) -> str:
+        if not self.duration or self.duration <= 0:
+            return "0s"
+        total_sec = self.duration // 1000
+        mins = total_sec // 60
+        secs = total_sec % 60
+        if mins > 0:
+            return f"{mins}m {secs}s"
+        return f"{secs}s"
+
+
 class CpuUsage(BaseModel):
     model_config = ConfigDict(extra="ignore")
     systemCPULoad: Optional[float] = 0.0
@@ -90,6 +128,7 @@ class SystemResources(BaseModel):
     systemMemoryInfo: Optional[SystemMemoryInfo] = None
     fileSystemInfo: Optional[FileSystemInfo] = None
     softwareVersion: Optional[AMSVersion] = None
+    systemStatus: Optional[SystemStatus] = None
     server_timing: Optional[ServerTiming] = Field(default=None, alias="server-timing")
     dbAverageQueryTimeMs: Optional[float] = 0.0
     localLiveStreams: Optional[int] = 0

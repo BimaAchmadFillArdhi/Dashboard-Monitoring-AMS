@@ -10,10 +10,16 @@ import httpx
 from app.config import get_settings
 from app.clients.models import (
     AMSVersion,
+    SystemStatus,
+    CpuUsage,
+    SystemMemoryInfo,
+    JvmMemoryUsage,
+    FileSystemInfo,
     SystemResources,
     ApplicationItem,
     BroadcastStream,
     BroadcastStatistics,
+    VoDItem,
     LogFileChunk,
 )
 
@@ -62,6 +68,7 @@ class CircuitBreaker:
                 f"[CircuitBreaker] Tripped to OPEN (failures={self.failure_count}). "
                 f"Fast-failing for {self.recovery_timeout}s"
             )
+
 
 class AMSClient:
     """Robust async HTTP client for Ant Media Server (AMS) Community Edition 3.1.0."""
@@ -215,11 +222,74 @@ class AMSClient:
             return AMSVersion(**resp.json())
         return None
 
-    async def get_system_resources(self) -> Optional[SystemResources]:
-        resp = await self.request("GET", "/rest/v2/system-resources")
+    async def get_system_status(self) -> Optional[SystemStatus]:
+        resp = await self.request("GET", "/rest/v2/system-status")
         if resp:
-            return SystemResources(**resp.json())
+            return SystemStatus(**resp.json())
         return None
+
+    async def get_cpu_status(self) -> Optional[CpuUsage]:
+        resp = await self.request("GET", "/rest/v2/cpu-status")
+        if resp:
+            return CpuUsage(**resp.json())
+        return None
+
+    async def get_system_memory_status(self) -> Optional[SystemMemoryInfo]:
+        resp = await self.request("GET", "/rest/v2/system-memory-status")
+        if resp:
+            return SystemMemoryInfo(**resp.json())
+        return None
+
+    async def get_jvm_memory_status(self) -> Optional[JvmMemoryUsage]:
+        resp = await self.request("GET", "/rest/v2/jvm-memory-status")
+        if resp:
+            return JvmMemoryUsage(**resp.json())
+        return None
+
+    async def get_file_system_status(self) -> Optional[FileSystemInfo]:
+        resp = await self.request("GET", "/rest/v2/file-system-status")
+        if resp:
+            return FileSystemInfo(**resp.json())
+        return None
+
+    async def get_system_resources(self) -> Optional[SystemResources]:
+        """Fetch unified system resources with automatic fallback to granular endpoints."""
+        resp = await self.request("GET", "/rest/v2/system-resources")
+        resources: Optional[SystemResources] = None
+        if resp:
+            try:
+                resources = SystemResources(**resp.json())
+            except Exception as e:
+                logger.warning(f"[AMSClient] Error parsing system-resources: {e}")
+
+        # If system-resources endpoint failed or missing, reconstruct from granular status
+        if not resources:
+            try:
+                cpu = await self.get_cpu_status()
+                sys_mem = await self.get_system_memory_status()
+                jvm_mem = await self.get_jvm_memory_status()
+                fs = await self.get_file_system_status()
+                ver = await self.get_version()
+                if cpu or sys_mem or jvm_mem:
+                    resources = SystemResources(
+                        cpuUsage=cpu,
+                        systemMemoryInfo=sys_mem,
+                        jvmMemoryUsage=jvm_mem,
+                        fileSystemInfo=fs,
+                        softwareVersion=ver,
+                    )
+            except Exception as err:
+                logger.error(f"[AMSClient] Fallback to granular status failed: {err}")
+
+        # Enrich with system-status if not already populated
+        if resources and not resources.systemStatus:
+            try:
+                sys_stat = await self.get_system_status()
+                resources.systemStatus = sys_stat
+            except Exception:
+                pass
+
+        return resources
 
     async def get_applications(self) -> List[str]:
         resp = await self.request("GET", "/rest/v2/applications")
@@ -265,12 +335,41 @@ class AMSClient:
             return BroadcastStatistics(**resp.json())
         return None
 
+    async def get_vod_count(self, app_name: str) -> int:
+        resp = await self.proxy_request(f"{app_name}/rest/v2/vods/count")
+        if resp:
+            data = resp.json()
+            return data.get("number", 0)
+        return 0
+
+    async def get_vod_list(
+        self, app_name: str, offset: int = 0, size: int = 50
+    ) -> List[VoDItem]:
+        resp = await self.proxy_request(f"{app_name}/rest/v2/vods/list/{offset}/{size}")
+        if resp:
+            data = resp.json()
+            if isinstance(data, list):
+                return [VoDItem(**item) for item in data]
+        return []
+
     async def get_log_chunk(
         self, offset: int = 0, size: int = 65536, log_type: str = "server"
     ) -> Optional[LogFileChunk]:
         resp = await self.request(
             "GET",
             f"/rest/v2/log-file/{offset}/{size}",
+            params={"logType": log_type},
+        )
+        if resp:
+            return LogFileChunk(**resp.json())
+        return None
+
+    async def get_log_tail(
+        self, size: int = 1000, log_type: str = "server"
+    ) -> Optional[LogFileChunk]:
+        resp = await self.request(
+            "GET",
+            f"/rest/v2/log-file/-1/{size}",
             params={"logType": log_type},
         )
         if resp:

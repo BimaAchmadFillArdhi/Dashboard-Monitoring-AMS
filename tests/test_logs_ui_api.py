@@ -67,7 +67,6 @@ async def override_db():
     yield
 
     app.dependency_overrides.clear()
-    await engine.dispose()
 
 
 def test_logs_page_render():
@@ -76,10 +75,10 @@ def test_logs_page_render():
     assert resp.status_code == 200
     assert "Histori Log &amp; Arsip" in resp.text or "Histori Log & Arsip" in resp.text
     assert "Live Streaming Log (Real-time)" in resp.text
-    assert "CCTV Bermasalah" in resp.text
+    assert "Ekspor CSV" in resp.text
 
 
-def test_api_logs_query(override_db):
+def test_api_logs_query_all(override_db):
     client = TestClient(app)
     resp = client.get("/api/logs")
     assert resp.status_code == 200
@@ -87,6 +86,53 @@ def test_api_logs_query(override_db):
 
     assert "entries" in data
     assert len(data["entries"]) == 3
+    assert data["counts"]["TOTAL"] == 3
+    assert data["counts"]["ERROR"] == 1
+    assert data["counts"]["WARN"] == 1
+    assert data["counts"]["INFO"] == 1
+
+
+def test_api_logs_filter_by_level(override_db):
+    client = TestClient(app)
+    resp = client.get("/api/logs?level=ERROR")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert len(data["entries"]) == 1
+    assert data["entries"][0]["level"] == "ERROR"
+    assert data["counts"]["TOTAL"] == 3
+    assert data["counts"]["ERROR"] == 1
+
+
+def test_api_logs_filter_by_stream(override_db):
+    client = TestClient(app)
+    resp = client.get("/api/logs?stream_id=cam2")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert len(data["entries"]) == 1
+    assert data["entries"][0]["stream_id"] == "cam2"
+    assert data["entries"][0]["level"] == "INFO"
+
+
+def test_api_logs_search_text(override_db):
+    client = TestClient(app)
+    resp = client.get("/api/logs?q=Numerical")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert len(data["entries"]) == 2
+    for e in data["entries"]:
+        assert "Numerical" in e["raw_message"]
+
+
+def test_api_logs_counts_remain_accurate(override_db):
+    client = TestClient(app)
+    resp = client.get("/api/logs?level=WARN")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert len(data["entries"]) == 1
     assert data["counts"]["TOTAL"] == 3
     assert data["counts"]["ERROR"] == 1
     assert data["counts"]["WARN"] == 1
@@ -104,6 +150,17 @@ def test_api_logs_dedupe(override_db):
     fp1_entry = next(e for e in data["entries"] if e["fingerprint"] == "fp1")
     assert fp1_entry["repeat_count"] == 2
     assert "cam1" in fp1_entry["stream_id"]
+
+
+def test_api_logs_filters(override_db):
+    client = TestClient(app)
+    resp = client.get("/api/logs/filters")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "stream_ids" in data
+    assert "app_names" in data
+    assert "cam1" in data["stream_ids"]
+    assert "atcs" in data["app_names"]
 
 
 def test_api_logs_csv_export(override_db):

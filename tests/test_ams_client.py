@@ -4,10 +4,16 @@ from pathlib import Path
 
 from app.clients.models import (
     AMSVersion,
+    SystemStatus,
+    CpuUsage,
+    SystemMemoryInfo,
+    JvmMemoryUsage,
+    FileSystemInfo,
     SystemResources,
     ApplicationItem,
     BroadcastStream,
     BroadcastStatistics,
+    VoDItem,
     LogFileChunk,
     mask_rtsp_url,
 )
@@ -78,6 +84,15 @@ def test_models_parse_from_real_samples():
     assert log_chunk.logFileSize > 0
     assert len(log_chunk.logContent) > 0
 
+    # 7. SystemStatus & VoDItem
+    stat = SystemStatus(osName="Linux", osArch="amd64", javaVersion="21", processorCount=24)
+    assert stat.osName == "Linux"
+    assert stat.processorCount == 24
+
+    vod = VoDItem(vodId="v1", vodName="test.mp4", duration=65000, fileSize=10485760)
+    assert vod.file_size_mb == 10.0
+    assert vod.duration_formatted == "1m 5s"
+
 
 def test_circuit_breaker_transitions():
     cb = CircuitBreaker(failure_threshold=3, recovery_timeout=0.2)
@@ -120,6 +135,31 @@ async def test_live_ams_client_smoke():
         assert version is not None
         assert version.versionName == "3.1.0"
 
+        # System Status
+        sys_stat = await client.get_system_status()
+        assert sys_stat is not None
+        assert sys_stat.osName != ""
+
+        # CPU Status
+        cpu = await client.get_cpu_status()
+        assert cpu is not None
+        assert cpu.systemCPULoad is not None
+
+        # System Memory Status
+        sys_mem = await client.get_system_memory_status()
+        assert sys_mem is not None
+        assert sys_mem.totalMemory > 0
+
+        # JVM Memory Status
+        jvm = await client.get_jvm_memory_status()
+        assert jvm is not None
+        assert jvm.maxMemory > 0
+
+        # File System Status
+        fs = await client.get_file_system_status()
+        assert fs is not None
+        assert fs.totalSpace > 0
+
         # System Resources
         res = await client.get_system_resources()
         assert res is not None
@@ -138,10 +178,17 @@ async def test_live_ams_client_smoke():
         assert len(streams) > 0
         assert streams[0].streamId != ""
 
-        # Log Chunk
+        # VoD List
+        vods = await client.get_vod_list("atcs", offset=0, size=5)
+        assert isinstance(vods, list)
+
+        # Log Chunk & Log Tail
         log_chunk = await client.get_log_chunk(offset=0, size=2048, log_type="server")
         assert log_chunk is not None
         assert log_chunk.logFileSize > 0
-        assert len(log_chunk.logContent) > 0
+
+        log_tail = await client.get_log_tail(size=1000, log_type="server")
+        assert log_tail is not None
+        assert len(log_tail.logContent) > 0
     finally:
         await client.close()

@@ -1,9 +1,11 @@
 import json
 import asyncio
 from typing import Set
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.session import get_db_session
 from app.services.dashboard_service import get_dashboard_service, DashboardSnapshot
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard API"])
@@ -38,6 +40,33 @@ async def get_dashboard_metrics():
     """Fetch current system metrics snapshot with ring buffer history."""
     snapshot = await dashboard_service.collect_snapshot()
     return snapshot
+
+
+@router.get("/history")
+async def get_dashboard_history(
+    hours: int = Query(1, ge=1, le=168, description="Rentang riwayat dalam jam (1 s/d 168)"),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Fetch historical system metrics (CPU, RAM, JVM, Disk, Streams, Viewers) from database."""
+    return await dashboard_service.get_historical_metrics(session=session, hours=hours)
+
+
+@router.get("/server-info")
+async def get_server_info():
+    """Fetch server environment and system details (OS, CPU Cores, Java, AMS version)."""
+    snapshot = await dashboard_service.collect_snapshot()
+    return {
+        "ams_connected": snapshot.ams_connected,
+        "version_name": snapshot.version_name,
+        "version_type": snapshot.version_type,
+        "instance_id": snapshot.instance_id,
+        "os_name": snapshot.os_name,
+        "os_arch": snapshot.os_arch,
+        "java_version": snapshot.java_version,
+        "processor_count": snapshot.processor_count,
+        "uptime": snapshot.uptime_formatted,
+        "server_time": snapshot.server_time,
+    }
 
 
 @router.get("/sse")

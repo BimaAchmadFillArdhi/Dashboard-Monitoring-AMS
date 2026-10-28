@@ -10,6 +10,11 @@
         connected: true,
         versionName: '3.1.0',
         versionType: 'Community Edition',
+        instanceId: '',
+        osName: 'Linux',
+        osArch: 'amd64',
+        javaVersion: '21',
+        processorCount: 1,
         uptimeStr: '-',
         serverTime: '',
         
@@ -34,6 +39,9 @@
         dbQueryMs: 0,
         applications: [],
         
+        // History Range
+        historyHours: 1,
+        
         // Heartbeat & Stale tracking
         secondsSinceUpdate: 0,
         isStale: false,
@@ -45,14 +53,54 @@
         streamChart: null,
         
         init() {
+            // 1. Ambil metrik terbaru langsung via REST API agar nilai tidak 0
+            this.fetchMetrics();
+            
+            // 2. Inisialisasi Chart.js dan ambil data riwayat dari /api/dashboard/history
             this.initCharts();
+            this.fetchHistory(this.historyHours);
+            
+            // 3. Hubungkan aliran real-time SSE
             this.connectSSE();
             
-            // Timer for 'data diperbarui X detik lalu'
+            // 4. Polling berkala setiap 4 detik untuk memastikan metrik selalu sinkron
+            setInterval(() => {
+                this.fetchMetrics();
+            }, 4000);
+            
+            // 5. Timer hitungan detik pembaruan
             setInterval(() => {
                 this.secondsSinceUpdate++;
                 this.isStale = this.secondsSinceUpdate > 10;
             }, 1000);
+        },
+        
+        async fetchMetrics() {
+            try {
+                const res = await fetch('/api/dashboard/metrics');
+                if (res.ok) {
+                    const data = await res.json();
+                    this.applySnapshot(data);
+                    this.secondsSinceUpdate = 0;
+                    this.isStale = false;
+                }
+            } catch (err) {
+                console.error('Gagal mengambil metrik dashboard:', err);
+                this.connected = false;
+            }
+        },
+
+        async fetchHistory(hours = 1) {
+            this.historyHours = hours;
+            try {
+                const res = await fetch(`/api/dashboard/history?hours=${hours}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    this.applyHistory(data);
+                }
+            } catch (err) {
+                console.error('Gagal mengambil riwayat metrik:', err);
+            }
         },
         
         connectSSE() {
@@ -79,60 +127,77 @@
         },
         
         applySnapshot(d) {
-            this.connected = d.ams_connected;
-            this.versionName = d.version_name;
-            this.versionType = d.version_type;
-            this.uptimeStr = d.uptime_formatted;
-            this.serverTime = d.server_time;
+            this.connected = d.ams_connected ?? d.connected ?? false;
+            this.versionName = d.version_name || d.versionName || '3.1.0';
+            this.versionType = d.version_type || d.versionType || 'Community Edition';
+            this.instanceId = d.instance_id || d.instanceId || '';
+            this.osName = d.os_name || d.osName || 'Linux';
+            this.osArch = d.os_arch || d.osArch || 'amd64';
+            this.javaVersion = d.java_version || d.javaVersion || '21';
+            this.processorCount = d.processor_count ?? d.processorCount ?? 1;
+            this.uptimeStr = d.uptime_formatted || d.uptimeFormatted || '-';
+            this.serverTime = d.server_time || d.serverTime || '';
             
-            this.cpuPercent = d.cpu_percent;
-            this.cpuLoadAvg = d.cpu_load_avg;
+            this.cpuPercent = d.cpu_percent ?? d.cpuPercent ?? 0;
+            const rawLoad = d.cpu_load_avg ?? d.cpuLoadAvg ?? 0;
+            this.cpuLoadAvg = typeof rawLoad === 'number' ? Math.round(rawLoad * 100) / 100 : rawLoad;
             
-            this.sysMemUsedGb = d.system_memory_used_gb;
-            this.sysMemTotalGb = d.system_memory_total_gb;
-            this.sysMemPercent = d.system_memory_percent;
+            this.sysMemUsedGb = d.system_memory_used_gb ?? d.sysMemUsedGb ?? 0;
+            this.sysMemTotalGb = d.system_memory_total_gb ?? d.sysMemTotalGb ?? 0;
+            this.sysMemPercent = d.system_memory_percent ?? d.sysMemPercent ?? 0;
             
-            this.jvmHeapUsedMb = d.jvm_heap_used_mb;
-            this.jvmHeapMaxMb = d.jvm_heap_max_mb;
-            this.jvmHeapPercent = d.jvm_heap_percent;
+            this.jvmHeapUsedMb = d.jvm_heap_used_mb ?? d.jvmHeapUsedMb ?? 0;
+            this.jvmHeapMaxMb = d.jvm_heap_max_mb ?? d.jvmHeapMaxMb ?? 0;
+            this.jvmHeapPercent = d.jvm_heap_percent ?? d.jvmHeapPercent ?? 0;
             
-            this.diskUsedGb = d.disk_used_gb;
-            this.diskTotalGb = d.disk_total_gb;
-            this.diskFreeGb = d.disk_free_gb;
-            this.diskPercent = d.disk_percent;
+            this.diskUsedGb = d.disk_used_gb ?? d.diskUsedGb ?? 0;
+            this.diskTotalGb = d.disk_total_gb ?? d.diskTotalGb ?? 0;
+            this.diskFreeGb = d.disk_free_gb ?? d.diskFreeGb ?? 0;
+            this.diskPercent = d.disk_percent ?? d.diskPercent ?? 0;
             
-            this.totalLiveStreams = d.total_live_streams;
-            this.totalViewers = d.total_viewers;
-            this.webrtcViewers = d.webrtc_viewers;
-            this.hlsViewers = d.hls_viewers;
-            this.dashViewers = d.dash_viewers;
-            this.dbQueryMs = d.db_query_avg_ms;
+            this.totalLiveStreams = d.total_live_streams ?? d.totalLiveStreams ?? 0;
+            this.totalViewers = d.total_viewers ?? d.totalViewers ?? 0;
+            this.webrtcViewers = d.webrtc_viewers ?? d.webrtcViewers ?? 0;
+            this.hlsViewers = d.hls_viewers ?? d.hlsViewers ?? 0;
+            this.dashViewers = d.dash_viewers ?? d.dashViewers ?? 0;
+            this.dbQueryMs = d.db_query_avg_ms ?? d.dbQueryMs ?? 0;
             this.applications = d.applications || [];
             
-            // Update charts with history
-            if (d.history && this.cpuChart && this.memChart && this.streamChart) {
-                const labels = d.history.timestamps || [];
-                
-                // CPU Chart
-                this.cpuChart.data.labels = labels;
-                this.cpuChart.data.datasets[0].data = d.history.cpu || [];
-                this.cpuChart.update('none');
-                
-                // Memory Chart
-                this.memChart.data.labels = labels;
-                this.memChart.data.datasets[0].data = d.history.memory_system || [];
-                this.memChart.data.datasets[1].data = d.history.jvm_heap || [];
-                this.memChart.update('none');
-                
-                // Streams Chart
-                this.streamChart.data.labels = labels;
-                this.streamChart.data.datasets[0].data = d.history.live_streams || [];
-                this.streamChart.data.datasets[1].data = d.history.viewers || [];
-                this.streamChart.update('none');
+            // Perbarui grafik jika ada riwayat dalam snapshot dan belum ada riwayat per jam
+            if (d.history && this.historyHours === 1 && (!this.cpuChart || this.cpuChart.data.labels.length <= 1)) {
+                this.applyHistory(d.history);
             }
+        },
+
+        applyHistory(data) {
+            if (!data || !this.cpuChart || !this.memChart || !this.streamChart) return;
+            const labels = data.timestamps || [];
+            if (labels.length === 0) return;
+            
+            // CPU Chart
+            this.cpuChart.data.labels = labels;
+            this.cpuChart.data.datasets[0].data = data.cpu || [];
+            this.cpuChart.update('none');
+            
+            // Memory Chart
+            this.memChart.data.labels = labels;
+            this.memChart.data.datasets[0].data = data.memory_system || [];
+            this.memChart.data.datasets[1].data = data.jvm_heap || [];
+            this.memChart.update('none');
+            
+            // Streams Chart
+            this.streamChart.data.labels = labels;
+            this.streamChart.data.datasets[0].data = data.live_streams || [];
+            this.streamChart.data.datasets[1].data = data.viewers || [];
+            this.streamChart.update('none');
         },
         
         initCharts() {
+            if (typeof Chart === 'undefined') {
+                setTimeout(() => this.initCharts(), 100);
+                return;
+            }
+            
             const chartOptions = {
                 responsive: true,
                 maintainAspectRatio: false,
@@ -159,7 +224,7 @@
             
             // 1. CPU Sparkline
             const ctxCpu = document.getElementById('chart-cpu')?.getContext('2d');
-            if (ctxCpu) {
+            if (ctxCpu && !this.cpuChart) {
                 this.cpuChart = new Chart(ctxCpu, {
                     type: 'line',
                     data: {
@@ -177,7 +242,7 @@
             
             // 2. Memory Sparkline
             const ctxMem = document.getElementById('chart-mem')?.getContext('2d');
-            if (ctxMem) {
+            if (ctxMem && !this.memChart) {
                 this.memChart = new Chart(ctxMem, {
                     type: 'line',
                     data: {
@@ -203,7 +268,7 @@
             
             // 3. Streams & Viewers Sparkline
             const ctxStream = document.getElementById('chart-stream')?.getContext('2d');
-            if (ctxStream) {
+            if (ctxStream && !this.streamChart) {
                 this.streamChart = new Chart(ctxStream, {
                     type: 'line',
                     data: {
@@ -229,13 +294,39 @@
         }
      }">
 
+    <!-- ERROR BANNER IF AMS DISCONNECTED -->
+    <template x-if="!connected">
+        <div class="p-3.5 rounded border border-rose-300 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 text-xs text-rose-800 dark:text-rose-200 flex items-center justify-between shadow-sm">
+            <div class="flex items-center gap-2.5">
+                <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse"></span>
+                <span><strong>Peringatan Koneksi:</strong> Ant Media Server di <code>http://103.131.105.122:5080</code> tidak dapat dijangkau atau sesi login terputus. Mencoba reconnect otomatis...</span>
+            </div>
+            <button type="button" @click="fetchMetrics(); connectSSE();" class="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-700 text-white font-medium text-[11px] cursor-pointer">
+                Coba Ulang
+            </button>
+        </div>
+    </template>
+
     <!-- TOP SYSTEM STATUS & UPTIME BAR -->
     <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)]">
         <div class="flex flex-wrap items-center gap-4 text-xs">
             <div class="flex items-center gap-2">
                 <span class="w-2.5 h-2.5 rounded-full" :class="connected ? 'bg-emerald-500' : 'bg-rose-500'"></span>
-                <span class="font-semibold text-[var(--text-main)]" x-text="connected ? 'Ant Media Server Aktif' : 'Server AMS Tidak Terhubung'"></span>
+                <span class="font-semibold text-[var(--text-main)]" x-text="connected ? ('Ant Media Server ' + versionName + ' (' + versionType + ')') : 'Server AMS Tidak Terhubung'"></span>
             </div>
+            <span class="h-3 w-px bg-[var(--border-color)]"></span>
+            <div class="font-mono text-[var(--text-muted)]">
+                OS: <strong class="text-[var(--text-main)]" x-text="osName + ' (' + osArch + ')'"></strong>
+            </div>
+            <span class="h-3 w-px bg-[var(--border-color)]"></span>
+            <div class="font-mono text-[var(--text-muted)]">
+                CPU: <strong class="text-[var(--text-main)]" x-text="processorCount + ' Core'"></strong>
+            </div>
+            <span class="h-3 w-px bg-[var(--border-color)]"></span>
+            <div class="font-mono text-[var(--text-muted)]">
+                Java: <strong class="text-[var(--text-main)]" x-text="'v' + javaVersion"></strong>
+            </div>
+            <span class="h-3 w-px bg-[var(--border-color)]"></span>
             <div class="font-mono text-[var(--text-muted)]">
                 Uptime: <strong class="text-[var(--text-main)]" x-text="uptimeStr"></strong>
             </div>
@@ -245,7 +336,7 @@
             </div>
         </div>
 
-        <div class="flex items-center gap-2 text-[11px] font-mono">
+        <div class="flex items-center gap-3 text-[11px] font-mono">
             <template x-if="isStale">
                 <span class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-medium">
                     Data Stale (Tidak Ada Pembaruan)
@@ -254,72 +345,111 @@
             <span class="text-[var(--text-muted)]">
                 Diperbarui <span class="font-semibold text-[var(--text-main)]" x-text="secondsSinceUpdate"></span> detik lalu
             </span>
+            <button type="button"
+                    @click="fetchMetrics()"
+                    class="p-1 rounded border border-[var(--border-color)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-muted)] hover:text-[var(--text-main)] cursor-pointer"
+                    title="Segarkan Metrik Sekarang">
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"/>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                </svg>
+            </button>
         </div>
     </div>
 
     <!-- METRIC BLOCKS & SPARKLINE CHARTS (Varied hierarchy, NOT identical cards grid) -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-        <!-- 1. CPU Block with Chart -->
-        <div class="p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] flex flex-col justify-between space-y-3">
-            <div class="flex items-center justify-between border-b border-[var(--border-color)] pb-2">
-                <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">System CPU</span>
-                <span class="text-[10px] font-mono text-[var(--text-muted)]">Load 1m: <strong x-text="cpuLoadAvg"></strong></span>
+    <div class="space-y-2">
+        <!-- History Range Toolbar -->
+        <div class="flex items-center justify-between text-xs">
+            <span class="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider font-mono">
+                Riwayat Metrik Server (API /api/dashboard/history)
+            </span>
+            <div class="flex items-center gap-1 font-mono text-[10px]">
+                <span class="text-[var(--text-muted)] mr-1">Rentang:</span>
+                <button type="button"
+                        @click="fetchHistory(1)"
+                        :class="historyHours === 1 ? 'bg-[var(--accent)] text-white font-semibold' : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                        class="px-2 py-0.5 rounded border border-[var(--border-color)] transition-colors cursor-pointer">
+                    1 Jam
+                </button>
+                <button type="button"
+                        @click="fetchHistory(6)"
+                        :class="historyHours === 6 ? 'bg-[var(--accent)] text-white font-semibold' : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                        class="px-2 py-0.5 rounded border border-[var(--border-color)] transition-colors cursor-pointer">
+                    6 Jam
+                </button>
+                <button type="button"
+                        @click="fetchHistory(24)"
+                        :class="historyHours === 24 ? 'bg-[var(--accent)] text-white font-semibold' : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                        class="px-2 py-0.5 rounded border border-[var(--border-color)] transition-colors cursor-pointer">
+                    24 Jam
+                </button>
             </div>
-            <div class="flex items-baseline gap-2 font-mono">
-                <span class="text-3xl font-bold text-[var(--accent-text)]" x-text="cpuPercent"></span>
-                <span class="text-sm font-medium text-[var(--text-muted)]">%</span>
-            </div>
-            <!-- Sparkline -->
-            <div class="h-24 w-full relative">
-                <canvas id="chart-cpu"></canvas>
-            </div>
-            <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right">Riwayat beban 5 menit terakhir</div>
         </div>
 
-        <!-- 2. Memory & JVM Block with Chart -->
-        <div class="p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] flex flex-col justify-between space-y-3">
-            <div class="flex items-center justify-between border-b border-[var(--border-color)] pb-2">
-                <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">Memory &amp; Heap JVM</span>
-                <span class="text-[10px] font-mono text-[var(--text-muted)]" x-text="sysMemUsedGb + ' GB / ' + sysMemTotalGb + ' GB'"></span>
-            </div>
-            <div class="flex items-baseline justify-between font-mono">
-                <div>
-                    <span class="text-3xl font-bold text-emerald-600 dark:text-emerald-400" x-text="sysMemPercent"></span>
-                    <span class="text-sm font-medium text-[var(--text-muted)]">% RAM</span>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <!-- 1. CPU Block with Chart -->
+            <div class="p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] flex flex-col justify-between space-y-3">
+                <div class="flex items-center justify-between border-b border-[var(--border-color)] pb-2">
+                    <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">System CPU</span>
+                    <span class="text-[10px] font-mono text-[var(--text-muted)]">Load 1m: <strong x-text="cpuLoadAvg"></strong></span>
                 </div>
-                <div class="text-right">
-                    <span class="text-lg font-bold text-amber-600 dark:text-amber-400" x-text="jvmHeapUsedMb"></span>
-                    <span class="text-xs text-[var(--text-muted)]">MB Heap</span>
+                <div class="flex items-baseline gap-2 font-mono">
+                    <span class="text-3xl font-bold text-[var(--accent-text)]" x-text="cpuPercent"></span>
+                    <span class="text-sm font-medium text-[var(--text-muted)]">%</span>
                 </div>
+                <!-- Sparkline -->
+                <div class="h-24 w-full relative">
+                    <canvas id="chart-cpu"></canvas>
+                </div>
+                <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right" x-text="'Riwayat ' + historyHours + ' jam terakhir'"></div>
             </div>
-            <!-- Sparkline -->
-            <div class="h-24 w-full relative">
-                <canvas id="chart-mem"></canvas>
-            </div>
-            <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right">Hijau: Sistem RAM % | Amber: JVM Heap MB</div>
-        </div>
 
-        <!-- 3. Live Streams & Viewers Block with Chart -->
-        <div class="p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] flex flex-col justify-between space-y-3">
-            <div class="flex items-center justify-between border-b border-[var(--border-color)] pb-2">
-                <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">Live Streams &amp; Viewer</span>
-                <span class="text-[10px] font-mono text-[var(--text-muted)]">WebRTC: <strong x-text="webrtcViewers"></strong> | HLS: <strong x-text="hlsViewers"></strong></span>
-            </div>
-            <div class="flex items-baseline justify-between font-mono">
-                <div>
-                    <span class="text-3xl font-bold text-cyan-600 dark:text-cyan-400" x-text="totalLiveStreams"></span>
-                    <span class="text-sm font-medium text-[var(--text-muted)]">Live</span>
+            <!-- 2. Memory & JVM Block with Chart -->
+            <div class="p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] flex flex-col justify-between space-y-3">
+                <div class="flex items-center justify-between border-b border-[var(--border-color)] pb-2">
+                    <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">Memory &amp; Heap JVM</span>
+                    <span class="text-[10px] font-mono text-[var(--text-muted)]" x-text="sysMemUsedGb + ' GB / ' + sysMemTotalGb + ' GB'"></span>
                 </div>
-                <div class="text-right">
-                    <span class="text-2xl font-bold text-purple-600 dark:text-purple-400" x-text="totalViewers"></span>
-                    <span class="text-xs text-[var(--text-muted)]">Penonton Total</span>
+                <div class="flex items-baseline justify-between font-mono">
+                    <div>
+                        <span class="text-3xl font-bold text-emerald-600 dark:text-emerald-400" x-text="sysMemPercent"></span>
+                        <span class="text-sm font-medium text-[var(--text-muted)]">% RAM</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-lg font-bold text-amber-600 dark:text-amber-400" x-text="jvmHeapUsedMb"></span>
+                        <span class="text-xs text-[var(--text-muted)]" x-text="'MB Heap (' + jvmHeapPercent + '%)'"></span>
+                    </div>
                 </div>
+                <!-- Sparkline -->
+                <div class="h-24 w-full relative">
+                    <canvas id="chart-mem"></canvas>
+                </div>
+                <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right">Hijau: Sistem RAM % | Amber: JVM Heap MB</div>
             </div>
-            <!-- Sparkline -->
-            <div class="h-24 w-full relative">
-                <canvas id="chart-stream"></canvas>
+
+            <!-- 3. Live Streams & Viewers Block with Chart -->
+            <div class="p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] flex flex-col justify-between space-y-3">
+                <div class="flex items-center justify-between border-b border-[var(--border-color)] pb-2">
+                    <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">Live Streams &amp; Viewer</span>
+                    <span class="text-[10px] font-mono text-[var(--text-muted)]">WebRTC: <strong x-text="webrtcViewers"></strong> | HLS: <strong x-text="hlsViewers"></strong></span>
+                </div>
+                <div class="flex items-baseline justify-between font-mono">
+                    <div>
+                        <span class="text-3xl font-bold text-cyan-600 dark:text-cyan-400" x-text="totalLiveStreams"></span>
+                        <span class="text-sm font-medium text-[var(--text-muted)]">Live</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-2xl font-bold text-purple-600 dark:text-purple-400" x-text="totalViewers"></span>
+                        <span class="text-xs text-[var(--text-muted)]">Penonton Total</span>
+                    </div>
+                </div>
+                <!-- Sparkline -->
+                <div class="h-24 w-full relative">
+                    <canvas id="chart-stream"></canvas>
+                </div>
+                <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right">Teal: Jumlah Live | Ungu: Total Viewer</div>
             </div>
-            <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right">Teal: Jumlah Live | Ungu: Total Viewer</div>
         </div>
     </div>
 
@@ -329,7 +459,7 @@
             <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">Kapasitas Penyimpanan Disk Server</span>
             <span class="font-mono text-xs text-[var(--text-muted)]">
                 Terpakai: <strong class="text-[var(--text-main)]" x-text="diskUsedGb + ' GB'"></strong> / <span x-text="diskTotalGb + ' GB'"></span>
-                (Tersisa: <span class="text-emerald-600 font-semibold" x-text="diskFreeGb + ' GB'"></span>)
+                (Tersisa: <span class="text-emerald-600 font-semibold" x-text="diskFreeGb + ' GB'"></span>, <span class="text-[var(--text-main)] font-semibold" x-text="diskPercent + '%'"></span>)
             </span>
         </div>
         <!-- Disk bar indicator -->

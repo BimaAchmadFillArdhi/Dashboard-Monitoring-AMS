@@ -15,6 +15,7 @@ log_service = get_log_service()
 health_service = HealthService()
 ams_client = get_ams_client()
 
+
 # SSE Broadcaster for real-time live log tailing
 class LogBroadcaster:
     def __init__(self):
@@ -41,7 +42,7 @@ log_broadcaster = LogBroadcaster()
 
 @router.get("")
 async def get_logs(
-    date: Optional[str] = Query(None, description="Tanggal YYYY-MM-DD"),
+    date: Optional[str] = Query(None, description="Tanggal YYYY-MM-DD atau ALL"),
     level: Optional[str] = Query(None, description="ERROR, WARN, INFO, DEBUG, ALL"),
     stream_id: Optional[str] = Query(None, description="Filter stream ID atau ALL"),
     app_name: Optional[str] = Query(None, description="Filter app name atau ALL"),
@@ -65,6 +66,12 @@ async def get_logs(
         cursor_id=cursor,
         limit=limit,
     )
+
+
+@router.get("/filters")
+async def get_log_filters(session: AsyncSession = Depends(get_db_session)):
+    """Fetch available stream IDs and applications for search filter dropdowns."""
+    return await log_service.get_filter_options(session)
 
 
 @router.get("/export.csv")
