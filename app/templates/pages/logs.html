@@ -9,7 +9,7 @@
 <div class="space-y-6"
      x-data="{
         mode: 'histori', // 'histori' | 'live'
-        date: new Date().toISOString().split('T')[0],
+        date: '',
         level: 'ALL',
         streamId: 'ALL',
         appName: 'ALL',
@@ -27,6 +27,10 @@
         cursorHistory: [],
         isLoading: false,
         expandedRows: {},
+        
+        // Dynamic Filter Options
+        availableStreams: [],
+        availableApps: [],
         
         // Live SSE State
         liveLogs: [],
@@ -47,9 +51,26 @@
             if (urlParams.get('level')) {
                 this.level = urlParams.get('level');
             }
+            if (urlParams.get('date')) {
+                this.date = urlParams.get('date');
+            }
             
+            this.fetchFilters();
             this.fetchLogs();
             this.fetchProblematicCCTV();
+        },
+        
+        async fetchFilters() {
+            try {
+                const res = await fetch('/api/logs/filters');
+                if (res.ok) {
+                    const data = await res.json();
+                    this.availableStreams = data.stream_ids || [];
+                    this.availableApps = data.app_names || [];
+                }
+            } catch (err) {
+                console.error('Gagal mengambil filter options:', err);
+            }
         },
         
         async fetchLogs(resetCursor = true) {
@@ -60,7 +81,7 @@
             }
             
             const params = new URLSearchParams();
-            if (this.date) params.append('date', this.date);
+            if (this.date && this.date !== 'ALL') params.append('date', this.date);
             if (this.level && this.level !== 'ALL') params.append('level', this.level);
             if (this.streamId && this.streamId !== 'ALL') params.append('stream_id', this.streamId);
             if (this.appName && this.appName !== 'ALL') params.append('app_name', this.appName);
@@ -139,7 +160,7 @@
         
         exportCSV() {
             const params = new URLSearchParams();
-            if (this.date) params.append('date', this.date);
+            if (this.date && this.date !== 'ALL') params.append('date', this.date);
             if (this.level && this.level !== 'ALL') params.append('level', this.level);
             if (this.streamId && this.streamId !== 'ALL') params.append('stream_id', this.streamId);
             if (this.searchQuery.trim()) params.append('q', this.searchQuery.trim());
@@ -298,7 +319,15 @@
         <!-- Row 1: Date, Search, CCTV Filter -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
-                <label class="text-[11px] font-medium text-[var(--text-main)] block mb-1">Pilih Tanggal Log:</label>
+                <div class="flex items-center justify-between mb-1">
+                    <label class="text-[11px] font-medium text-[var(--text-main)]">Tanggal Log:</label>
+                    <button type="button"
+                            @click="date = ''; fetchLogs(true)"
+                            class="text-[10px] text-[var(--accent-text)] hover:underline font-mono cursor-pointer"
+                            x-show="date">
+                        Semua Tanggal
+                    </button>
+                </div>
                 <input type="date"
                        x-model="date"
                        @change="fetchLogs(true)"
@@ -328,10 +357,9 @@
                         @change="fetchLogs(true)"
                         class="h-8 w-full px-2 text-xs font-mono rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] cursor-pointer">
                     <option value="ALL">Semua Kamera / Stream</option>
-                    <option value="TC-DemenGlagah-VSS">TC-DemenGlagah-VSS</option>
-                    <option value="APMD.stream">APMD.stream</option>
-                    <option value="ATCS_pingit.stream">ATCS_pingit.stream</option>
-                    <option value="cctv_sma1_depan">cctv_sma1_depan</option>
+                    <template x-for="sid in availableStreams" :key="sid">
+                        <option :value="sid" x-text="sid"></option>
+                    </template>
                 </select>
             </div>
 
@@ -341,10 +369,9 @@
                         @change="fetchLogs(true)"
                         class="h-8 w-full px-2 text-xs font-mono rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] text-[var(--text-main)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] cursor-pointer">
                     <option value="ALL">Semua Aplikasi</option>
-                    <option value="atcs">atcs</option>
-                    <option value="atcs-kota">atcs-kota</option>
-                    <option value="cctv-sekolah">cctv-sekolah</option>
-                    <option value="LiveApp">LiveApp</option>
+                    <template x-for="app in availableApps" :key="app">
+                        <option :value="app" x-text="app"></option>
+                    </template>
                 </select>
             </div>
         </div>
@@ -422,7 +449,7 @@
                 </div>
                 <button type="button"
                         @click="clearFingerprintFilter()"
-                        class="text-[var(--accent-text)] hover:underline font-medium">
+                        class="text-[var(--accent-text)] hover:underline font-medium cursor-pointer">
                     Hapus Filter Pola &times;
                 </button>
             </div>

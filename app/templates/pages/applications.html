@@ -10,6 +10,7 @@
         selectedApp: 'atcs',
         activeTab: 'streams', // 'streams' | 'vod' | 'settings'
         searchQuery: '',
+        vodSearchQuery: '',
         
         // Applications overview
         apps: [],
@@ -19,10 +20,22 @@
         streams: [],
         isLoadingStreams: false,
         
-        // Detail Drawer
+        // VoD data
+        vods: [],
+        isLoadingVods: false,
+        
+        // Detail Drawer & Real-Time Monitoring
         isDrawerOpen: false,
         selectedStream: null,
         drawerSseSource: null,
+        streamHistoryHours: 1,
+        activeChartTab: 'all', // 'all' | 'bitrate' | 'speed' | 'viewers'
+        isLoadingStreamHistory: false,
+
+        // Charts
+        chartBitrate: null,
+        chartSpeed: null,
+        chartViewers: null,
         
         init() {
             // Check query param for initial app
@@ -65,12 +78,40 @@
                 this.isLoadingStreams = false;
             }
         },
+
+        async fetchVods() {
+            this.isLoadingVods = true;
+            try {
+                const url = `/api/applications/${encodeURIComponent(this.selectedApp)}/vods?q=${encodeURIComponent(this.vodSearchQuery)}`;
+                const res = await fetch(url);
+                if (res.ok) {
+                    this.vods = await res.json();
+                }
+            } catch (err) {
+                console.error('Gagal mengambil daftar VoD:', err);
+            } finally {
+                this.isLoadingVods = false;
+            }
+        },
         
         selectApplication(name) {
             this.selectedApp = name;
             this.searchQuery = '';
+            this.vodSearchQuery = '';
             this.closeDrawer();
             this.fetchStreams();
+            if (this.activeTab === 'vod') {
+                this.fetchVods();
+            }
+        },
+
+        switchTab(tab) {
+            this.activeTab = tab;
+            if (tab === 'vod') {
+                this.fetchVods();
+            } else if (tab === 'streams') {
+                this.fetchStreams();
+            }
         },
         
         async openDrawer(streamId) {
@@ -80,7 +121,13 @@
                 if (res.ok) {
                     this.selectedStream = await res.json();
                     this.isDrawerOpen = true;
-                    this.startDrawerSSE(streamId);
+
+                    // Inisialisasi grafik dan muat riwayat metrik
+                    this.$nextTick(() => {
+                        this.initStreamCharts();
+                        this.fetchStreamHistory(streamId, this.streamHistoryHours);
+                        this.startDrawerSSE(streamId);
+                    });
                 }
             } catch (err) {
                 console.error('Gagal memuat detail stream:', err);
@@ -93,8 +140,212 @@
                 this.drawerSseSource.close();
                 this.drawerSseSource = null;
             }
+            this.destroyStreamCharts();
+            this.selectedStream = null;
         },
-        
+
+        destroyStreamCharts() {
+            if (this.chartBitrate) {
+                try { this.chartBitrate.destroy(); } catch (e) {}
+                this.chartBitrate = null;
+            }
+            if (this.chartSpeed) {
+                try { this.chartSpeed.destroy(); } catch (e) {}
+                this.chartSpeed = null;
+            }
+            if (this.chartViewers) {
+                try { this.chartViewers.destroy(); } catch (e) {}
+                this.chartViewers = null;
+            }
+        },
+
+        async fetchStreamHistory(streamId, hours = 1) {
+            this.streamHistoryHours = hours;
+            this.isLoadingStreamHistory = true;
+            try {
+                const url = `/api/applications/${encodeURIComponent(this.selectedApp)}/streams/${encodeURIComponent(streamId)}/history?hours=${hours}`;
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    this.applyStreamHistory(data);
+                }
+            } catch (err) {
+                console.error('Gagal memuat riwayat stream:', err);
+            } finally {
+                this.isLoadingStreamHistory = false;
+            }
+        },
+
+        applyStreamHistory(data) {
+            if (!data) return;
+            this._lastStreamHistory = data;
+            const labels = data.timestamps || [];
+
+            if (this.chartBitrate) {
+                this.chartBitrate.data.labels = [...labels];
+                this.chartBitrate.data.datasets[0].data = [...(data.bitrate_mbps || [])];
+                this.chartBitrate.update('none');
+            }
+            if (this.chartSpeed) {
+                this.chartSpeed.data.labels = [...labels];
+                this.chartSpeed.data.datasets[0].data = [...(data.speed || [])];
+                this.chartSpeed.update('none');
+            }
+            if (this.chartViewers) {
+                this.chartViewers.data.labels = [...labels];
+                this.chartViewers.data.datasets[0].data = [...(data.viewers || [])];
+                this.chartViewers.update('none');
+            }
+        },
+
+        initStreamCharts() {
+            if (typeof Chart === 'undefined') {
+                setTimeout(() => this.initStreamCharts(), 100);
+                return;
+            }
+
+            const ctxBitrate = document.getElementById('chart-stream-bitrate')?.getContext('2d');
+            if (!ctxBitrate) {
+                setTimeout(() => this.initStreamCharts(), 80);
+                return;
+            }
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                elements: {
+                    line: { tension: 0.25, borderWidth: 2 },
+                    point: { radius: 1, hitRadius: 8, hoverRadius: 4 }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        grid: { display: false },
+                        ticks: {
+                            font: { family: 'monospace', size: 9 },
+                            color: '#888',
+                            maxTicksLimit: 6,
+                            maxRotation: 0,
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(128, 128, 128, 0.1)' },
+                        ticks: {
+                            font: { family: 'monospace', size: 9 },
+                            color: '#888',
+                        }
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        bodyFont: { family: 'monospace', size: 10 },
+                        titleFont: { family: 'monospace', size: 10 },
+                    }
+                }
+            };
+
+            // 1. Bitrate Chart (Mbps)
+            const ctxBitrate = document.getElementById('chart-stream-bitrate')?.getContext('2d');
+            if (ctxBitrate && !this.chartBitrate) {
+                this.chartBitrate = new Chart(ctxBitrate, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: 'Bitrate (Mbps)',
+                            data: [],
+                            borderColor: '#0c828c', // solid teal
+                            backgroundColor: 'rgba(12, 130, 140, 0.08)',
+                            fill: true,
+                        }]
+                    },
+                    options: {
+                        ...chartBaseOpts,
+                        scales: {
+                            ...chartBaseOpts.scales,
+                            y: {
+                                ...chartBaseOpts.scales.y,
+                                ticks: {
+                                    ...chartBaseOpts.scales.y.ticks,
+                                    callback: (v) => v + ' Mbps'
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // 2. Speed Chart
+            const ctxSpeed = document.getElementById('chart-stream-speed')?.getContext('2d');
+            if (ctxSpeed && !this.chartSpeed) {
+                this.chartSpeed = new Chart(ctxSpeed, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: 'Stream Speed',
+                            data: [],
+                            borderColor: '#d97706', // solid amber
+                            backgroundColor: 'rgba(217, 119, 6, 0.08)',
+                            fill: true,
+                        }]
+                    },
+                    options: {
+                        ...chartBaseOpts,
+                        scales: {
+                            ...chartBaseOpts.scales,
+                            y: {
+                                ...chartBaseOpts.scales.y,
+                                ticks: {
+                                    ...chartBaseOpts.scales.y.ticks,
+                                    callback: (v) => v + 'x'
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // 3. Viewers Chart
+            const ctxViewers = document.getElementById('chart-stream-viewers')?.getContext('2d');
+            if (ctxViewers && !this.chartViewers) {
+                this.chartViewers = new Chart(ctxViewers, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: 'Penonton (Viewers)',
+                            data: [],
+                            borderColor: '#9333ea', // solid purple
+                            backgroundColor: 'rgba(147, 51, 234, 0.08)',
+                            fill: true,
+                        }]
+                    },
+                    options: {
+                        ...chartBaseOpts,
+                        scales: {
+                            ...chartBaseOpts.scales,
+                            y: {
+                                ...chartBaseOpts.scales.y,
+                                ticks: {
+                                    ...chartBaseOpts.scales.y.ticks,
+                                    stepSize: 1,
+                                    precision: 0,
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            if (this._lastStreamHistory) {
+                this.applyStreamHistory(this._lastStreamHistory);
+            }
+        },
+
         startDrawerSSE(streamId) {
             const url = `/api/applications/${encodeURIComponent(this.selectedApp)}/streams/${encodeURIComponent(streamId)}/live-sse`;
             this.drawerSseSource = new EventSource(url);
@@ -103,13 +354,52 @@
                 try {
                     const update = JSON.parse(event.data);
                     this.selectedStream.bitrate = update.bitrate;
+                    this.selectedStream.bitrate_mbps = update.bitrate_mbps ?? (update.bitrate ? Math.round(update.bitrate / 10000) / 100 : 0);
+                    this.selectedStream.bitrate_kbps = update.bitrate_kbps ?? Math.round((update.bitrate || 0) / 1000);
                     this.selectedStream.speed = update.speed;
                     this.selectedStream.total_viewers = update.total_viewers;
                     this.selectedStream.hls_viewers = update.hls_viewers;
                     this.selectedStream.webrtc_viewers = update.webrtc_viewers;
+                    this.selectedStream.dash_viewers = update.dash_viewers ?? 0;
                     this.selectedStream.status = update.status;
                     this.selectedStream.health_status = update.health_status;
                     this.selectedStream.health_tone = update.health_tone;
+
+                    const ts = update.timestamp || new Date().toLocaleTimeString('id-ID', { hour12: false });
+                    const maxLivePoints = 30;
+
+                    // Append real-time point to Bitrate chart
+                    if (this.chartBitrate) {
+                        this.chartBitrate.data.labels.push(ts);
+                        this.chartBitrate.data.datasets[0].data.push(this.selectedStream.bitrate_mbps);
+                        if (this.chartBitrate.data.labels.length > maxLivePoints) {
+                            this.chartBitrate.data.labels.shift();
+                            this.chartBitrate.data.datasets[0].data.shift();
+                        }
+                        this.chartBitrate.update('none');
+                    }
+
+                    // Append real-time point to Speed chart
+                    if (this.chartSpeed) {
+                        this.chartSpeed.data.labels.push(ts);
+                        this.chartSpeed.data.datasets[0].data.push(this.selectedStream.speed);
+                        if (this.chartSpeed.data.labels.length > maxLivePoints) {
+                            this.chartSpeed.data.labels.shift();
+                            this.chartSpeed.data.datasets[0].data.shift();
+                        }
+                        this.chartSpeed.update('none');
+                    }
+
+                    // Append real-time point to Viewers chart
+                    if (this.chartViewers) {
+                        this.chartViewers.data.labels.push(ts);
+                        this.chartViewers.data.datasets[0].data.push(this.selectedStream.total_viewers);
+                        if (this.chartViewers.data.labels.length > maxLivePoints) {
+                            this.chartViewers.data.labels.shift();
+                            this.chartViewers.data.datasets[0].data.shift();
+                        }
+                        this.chartViewers.update('none');
+                    }
                 } catch (e) {}
             };
         }
@@ -120,7 +410,7 @@
         <div>
             <h2 class="text-base font-bold text-[var(--text-main)]">Applications &amp; Stream Monitoring</h2>
             <p class="text-xs text-[var(--text-muted)] mt-0.5 font-mono">
-                Pilih aplikasi untuk melihat daftar stream kamera, status operasional (read-only), dan metrik live.
+                Pilih aplikasi untuk melihat daftar stream kamera, rekaman VoD, dan status operasional real-time.
             </p>
         </div>
         <div class="text-[11px] font-mono text-[var(--text-muted)]">
@@ -170,19 +460,19 @@
             <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-[var(--border-color)] pb-3">
                 <div class="flex items-center gap-6">
                     <button type="button"
-                            @click="activeTab = 'streams'"
+                            @click="switchTab('streams')"
                             :class="activeTab === 'streams' ? 'border-[var(--accent)] text-[var(--accent-text)] border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
                             class="pb-2 text-xs transition-colors cursor-pointer focus:outline-none">
                         Live Streams (<span x-text="streams.length"></span>)
                     </button>
                     <button type="button"
-                            @click="activeTab = 'vod'"
+                            @click="switchTab('vod')"
                             :class="activeTab === 'vod' ? 'border-[var(--accent)] text-[var(--accent-text)] border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
                             class="pb-2 text-xs transition-colors cursor-pointer focus:outline-none">
-                        VoD Rekaman
+                        VoD Rekaman (<span x-text="vods.length"></span>)
                     </button>
                     <button type="button"
-                            @click="activeTab = 'settings'"
+                            @click="switchTab('settings')"
                             :class="activeTab === 'settings' ? 'border-[var(--accent)] text-[var(--accent-text)] border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
                             class="pb-2 text-xs transition-colors cursor-pointer focus:outline-none">
                         Pengaturan (Read-Only)
@@ -195,6 +485,21 @@
                            x-model="searchQuery"
                            @input.debounce.300ms="fetchStreams()"
                            placeholder="Cari kamera atau stream..."
+                           class="h-8 w-full pl-7 pr-2.5 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] placeholder-[var(--text-subtle)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]">
+                    <div class="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none text-[var(--text-muted)]">
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"/>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                        </svg>
+                    </div>
+                </div>
+
+                <!-- Search Input for VoDs -->
+                <div x-show="activeTab === 'vod'" class="relative w-full sm:w-64">
+                    <input type="text"
+                           x-model="vodSearchQuery"
+                           @input.debounce.300ms="fetchVods()"
+                           placeholder="Cari rekaman VoD..."
                            class="h-8 w-full pl-7 pr-2.5 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] placeholder-[var(--text-subtle)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]">
                     <div class="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none text-[var(--text-muted)]">
                         <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -289,11 +594,19 @@
                                     
                                     <!-- Action -->
                                     <td class="px-4 py-3 text-right">
-                                        <button type="button"
-                                                @click.stop="openDrawer(s.stream_id)"
-                                                class="px-2 py-0.5 rounded text-[11px] font-medium border border-[var(--border-color)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-main)] cursor-pointer">
-                                            Detail &rarr;
-                                        </button>
+                                        <div class="inline-flex items-center gap-1.5">
+                                            <a :href="'/applications/' + encodeURIComponent(selectedApp) + '/streams/' + encodeURIComponent(s.stream_id)"
+                                               @click.stop
+                                               class="px-2 py-0.5 rounded text-[11px] font-medium border border-[var(--border-color)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-surface-hover)] text-[var(--accent-text)] cursor-pointer"
+                                               title="Buka Halaman Monitoring Stream Penuh">
+                                                Grafik &nearr;
+                                            </a>
+                                            <button type="button"
+                                                    @click.stop="openDrawer(s.stream_id)"
+                                                    class="px-2 py-0.5 rounded text-[11px] font-medium border border-[var(--border-color)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-main)] cursor-pointer">
+                                                Detail &rarr;
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
                             </template>
@@ -302,11 +615,72 @@
                 </div>
             </div>
 
-            <!-- TAB 2: VOD (READ-ONLY) -->
-            <div x-show="activeTab === 'vod'" class="p-6 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-center text-xs text-[var(--text-muted)]">
-                <div class="max-w-md mx-auto space-y-2">
-                    <h4 class="font-semibold text-[var(--text-main)]">Video on Demand (VoD)</h4>
-                    <p class="text-[11px]">Daftar rekaman berkas MP4/WebM pada aplikasi <strong class="text-[var(--text-main)]" x-text="selectedApp"></strong>. Saat ini rekaman dapat diakses melalui penyimpanan server.</p>
+            <!-- TAB 2: VOD (READ-ONLY REAL API TABLE) -->
+            <div x-show="activeTab === 'vod'" class="space-y-3">
+                <div class="overflow-x-auto rounded border border-[var(--border-color)] bg-[var(--bg-surface)]">
+                    <table class="w-full text-left text-xs border-collapse font-sans">
+                        <thead>
+                            <tr class="border-b border-[var(--border-color)] bg-[var(--bg-subtle)] text-[11px] font-semibold text-[var(--text-muted)] select-none">
+                                <th class="px-4 py-2.5 w-56">Nama Berkas VoD</th>
+                                <th class="px-4 py-2.5 w-40 font-mono">Stream ID</th>
+                                <th class="px-4 py-2.5 w-28 font-mono">Durasi</th>
+                                <th class="px-4 py-2.5 w-28 font-mono">Ukuran</th>
+                                <th class="px-4 py-2.5 w-32 font-mono">Tanggal</th>
+                                <th class="px-4 py-2.5 w-24 text-right">Tipe</th>
+                            </tr>
+                        </thead>
+
+                        <!-- Loading State -->
+                        <tbody x-show="isLoadingVods">
+                            <tr>
+                                <td colspan="6" class="px-4 py-12 text-center text-[var(--text-muted)]">
+                                    <div class="inline-flex items-center gap-2 text-xs">
+                                        <svg class="animate-spin w-4 h-4 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
+                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                                        </svg>
+                                        <span>Memeriksa berkas rekaman VoD...</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+
+                        <!-- Empty State -->
+                        <tbody x-show="!isLoadingVods && vods.length === 0">
+                            <tr>
+                                <td colspan="6" class="px-4 py-12 text-center">
+                                    <div class="flex flex-col items-center justify-center max-w-sm mx-auto space-y-1">
+                                        <h4 class="text-xs font-semibold text-[var(--text-main)]">Tidak ada berkas rekaman VoD</h4>
+                                        <p class="text-[11px] text-[var(--text-muted)]">
+                                            Aplikasi <strong class="text-[var(--text-main)]" x-text="selectedApp"></strong> belum memiliki berkas rekaman video (MP4/WebM). Rekaman akan otomatis muncul di sini jika fitur MP4/WebM diaktifkan pada stream.
+                                        </p>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+
+                        <!-- VoD Rows -->
+                        <tbody x-show="!isLoadingVods && vods.length > 0">
+                            <template x-for="v in vods" :key="v.vod_id">
+                                <tr class="border-b border-[var(--border-color)] hover:bg-[var(--bg-surface-hover)] transition-colors">
+                                    <td class="px-4 py-3">
+                                        <div class="flex flex-col">
+                                            <span class="font-mono text-xs font-bold text-[var(--text-main)] truncate" x-text="v.vod_name"></span>
+                                            <span class="text-[10px] text-[var(--text-muted)] font-mono truncate" x-text="v.file_path"></span>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-3 font-mono text-xs text-[var(--text-muted)]" x-text="v.stream_id"></td>
+                                    <td class="px-4 py-3 font-mono font-semibold text-[var(--text-main)]" x-text="v.duration_formatted"></td>
+                                    <td class="px-4 py-3 font-mono text-[var(--text-muted)]" x-text="v.file_size_mb + ' MB'"></td>
+                                    <td class="px-4 py-3 font-mono text-[10px] text-[var(--text-subtle)]" x-text="v.creation_date_formatted"></td>
+                                    <td class="px-4 py-3 text-right">
+                                        <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700"
+                                              x-text="v.vod_type"></span>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
@@ -365,23 +739,35 @@
                  x-transition:leave="transform transition ease-in duration-150"
                  x-transition:leave-start="translate-x-0"
                  x-transition:leave-end="translate-x-full"
-                 class="w-screen max-w-md flex flex-col bg-[var(--bg-surface)] border-l border-[var(--border-color)] shadow-xl">
+                 class="w-screen max-w-xl lg:max-w-2xl flex flex-col bg-[var(--bg-surface)] border-l border-[var(--border-color)] shadow-2xl">
                 
                 <!-- Drawer Header -->
-                <div class="h-14 flex items-center justify-between px-5 border-b border-[var(--border-color)] bg-[var(--bg-subtle)]">
+                <div class="h-14 flex items-center justify-between px-5 border-b border-[var(--border-color)] bg-[var(--bg-subtle)] flex-shrink-0">
                     <div class="flex flex-col min-w-0 pr-3">
-                        <h3 class="text-xs font-semibold text-[var(--text-main)] truncate" x-text="selectedStream?.name"></h3>
-                        <p class="text-[10px] text-[var(--text-muted)] font-mono truncate" x-text="'Stream ID: ' + selectedStream?.stream_id"></p>
+                        <div class="flex items-center gap-2">
+                            <span class="w-2.5 h-2.5 rounded-full"
+                                  :class="selectedStream?.status === 'broadcasting' ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'"></span>
+                            <h3 class="text-xs font-bold text-[var(--text-main)] truncate" x-text="selectedStream?.name"></h3>
+                        </div>
+                        <p class="text-[10px] text-[var(--text-muted)] font-mono truncate mt-0.5" x-text="'Stream ID: ' + selectedStream?.stream_id"></p>
                     </div>
-                    <button type="button"
-                            @click="closeDrawer()"
-                            class="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-surface-hover)] focus:outline-none cursor-pointer"
-                            aria-label="Tutup panel">
-                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <line x1="18" y1="6" x2="6" y2="18"/>
-                            <line x1="6" y1="6" x2="18" y2="18"/>
-                        </svg>
-                    </button>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        <a :href="'/applications/' + encodeURIComponent(selectedApp) + '/streams/' + encodeURIComponent(selectedStream?.stream_id)"
+                           class="px-2.5 py-1 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[var(--accent-text)] text-[11px] font-mono font-medium flex items-center gap-1 transition-colors"
+                           title="Buka Halaman Penuh Monitoring Stream">
+                            <span>Halaman Penuh</span>
+                            <span>&nearr;</span>
+                        </a>
+                        <button type="button"
+                                @click="closeDrawer()"
+                                class="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-surface-hover)] focus:outline-none cursor-pointer"
+                                aria-label="Tutup panel">
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Drawer Body -->
@@ -390,7 +776,12 @@
                         <div class="space-y-4">
                             <!-- Status & Health Pill -->
                             <div class="flex items-center justify-between pb-3 border-b border-[var(--border-color)]">
-                                <span class="text-xs text-[var(--text-muted)]">Status Kamera</span>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs text-[var(--text-muted)]">Status Kamera:</span>
+                                    <span class="font-mono text-xs font-bold uppercase"
+                                          :class="selectedStream.status === 'broadcasting' ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-500'"
+                                          x-text="selectedStream.status"></span>
+                                </div>
                                 <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium border"
                                       :class="{
                                           'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800': selectedStream.health_status === 'Sehat',
@@ -421,26 +812,154 @@
                                 </div>
                             </template>
 
-                            <!-- Live Real-Time SSE Metrics Grid -->
-                            <div class="grid grid-cols-2 gap-3 text-xs">
-                                <div class="p-2.5 rounded border border-[var(--border-color)] bg-[var(--bg-subtle)]">
+                            <!-- Live Real-Time Metrics KPI Grid (Bitrate, Speed, Viewers) -->
+                            <div class="grid grid-cols-3 gap-2.5 text-xs">
+                                <!-- Ingest Bitrate -->
+                                <div class="p-3 rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] flex flex-col justify-between">
                                     <div class="text-[10px] text-[var(--text-muted)] uppercase font-mono flex items-center justify-between">
-                                        <span>Bitrate (Live)</span>
-                                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                        <span>Bitrate</span>
+                                        <span class="w-1.5 h-1.5 rounded-full"
+                                              :class="selectedStream.status === 'broadcasting' ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'"></span>
                                     </div>
-                                    <div class="text-sm font-bold font-mono mt-0.5" x-text="selectedStream.bitrate + ' kbps'"></div>
+                                    <div class="mt-1">
+                                        <div class="text-base font-bold font-mono text-[var(--text-main)]"
+                                             x-text="(selectedStream.bitrate_mbps ?? 0) + ' Mbps'"></div>
+                                        <div class="text-[10px] font-mono text-[var(--text-muted)]"
+                                             x-text="(selectedStream.bitrate_kbps ?? 0) + ' kbps'"></div>
+                                    </div>
                                 </div>
-                                <div class="p-2.5 rounded border border-[var(--border-color)] bg-[var(--bg-subtle)]">
-                                    <div class="text-[10px] text-[var(--text-muted)] uppercase font-mono">Kecepatan Ingest</div>
-                                    <div class="text-sm font-bold font-mono mt-0.5" x-text="selectedStream.speed + 'x'"></div>
+
+                                <!-- Stream Speed -->
+                                <div class="p-3 rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] flex flex-col justify-between">
+                                    <div class="text-[10px] text-[var(--text-muted)] uppercase font-mono">Kecepatan</div>
+                                    <div class="mt-1">
+                                        <div class="text-base font-bold font-mono"
+                                             :class="(selectedStream.speed >= 0.9 && selectedStream.speed <= 1.1) ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'"
+                                             x-text="(selectedStream.speed ?? 0) + 'x'"></div>
+                                        <div class="text-[10px] font-mono text-[var(--text-muted)]">Rasio Ingest</div>
+                                    </div>
                                 </div>
-                                <div class="p-2.5 rounded border border-[var(--border-color)] bg-[var(--bg-subtle)]">
-                                    <div class="text-[10px] text-[var(--text-muted)] uppercase font-mono">Total Penonton</div>
-                                    <div class="text-sm font-bold font-mono mt-0.5" x-text="selectedStream.total_viewers + ' penonton'"></div>
+
+                                <!-- Total Viewers -->
+                                <div class="p-3 rounded border border-[var(--border-color)] bg-[var(--bg-subtle)] flex flex-col justify-between">
+                                    <div class="text-[10px] text-[var(--text-muted)] uppercase font-mono">Viewer</div>
+                                    <div class="mt-1">
+                                        <div class="text-base font-bold font-mono text-purple-600 dark:text-purple-400"
+                                             x-text="selectedStream.total_viewers ?? 0"></div>
+                                        <div class="text-[10px] font-mono text-[var(--text-muted)]"
+                                             x-text="'RTC: ' + (selectedStream.webrtc_viewers ?? 0) + ' | HLS: ' + (selectedStream.hls_viewers ?? 0)"></div>
+                                    </div>
                                 </div>
-                                <div class="p-2.5 rounded border border-[var(--border-color)] bg-[var(--bg-subtle)]">
-                                    <div class="text-[10px] text-[var(--text-muted)] uppercase font-mono">Resolusi Video</div>
-                                    <div class="text-sm font-bold font-mono mt-0.5" x-text="selectedStream.resolution"></div>
+                            </div>
+
+                            <!-- REAL-TIME MONITORING CHARTS SECTION (AMS STYLE) -->
+                            <div class="p-3.5 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] space-y-3">
+                                <!-- Chart Toolbar -->
+                                <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-[var(--border-color)] pb-2.5">
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="w-2 h-2 rounded-full bg-[var(--accent)]"></span>
+                                        <span class="text-xs font-bold uppercase tracking-wider text-[var(--text-main)] font-mono">
+                                            Grafik Monitoring Stream (AMS)
+                                        </span>
+                                    </div>
+                                    
+                                    <div class="flex items-center gap-2">
+                                        <!-- Chart selector pills -->
+                                        <div class="inline-flex rounded border border-[var(--border-color)] p-0.5 bg-[var(--bg-subtle)] text-[10px] font-mono">
+                                            <button type="button"
+                                                    @click="activeChartTab = 'all'"
+                                                    :class="activeChartTab === 'all' ? 'bg-[var(--accent)] text-white font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                                                    class="px-1.5 py-0.5 rounded cursor-pointer transition-colors">
+                                                Semua
+                                            </button>
+                                            <button type="button"
+                                                    @click="activeChartTab = 'bitrate'"
+                                                    :class="activeChartTab === 'bitrate' ? 'bg-[var(--accent)] text-white font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                                                    class="px-1.5 py-0.5 rounded cursor-pointer transition-colors">
+                                                Bitrate
+                                            </button>
+                                            <button type="button"
+                                                    @click="activeChartTab = 'speed'"
+                                                    :class="activeChartTab === 'speed' ? 'bg-[var(--accent)] text-white font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                                                    class="px-1.5 py-0.5 rounded cursor-pointer transition-colors">
+                                                Speed
+                                            </button>
+                                            <button type="button"
+                                                    @click="activeChartTab = 'viewers'"
+                                                    :class="activeChartTab === 'viewers' ? 'bg-[var(--accent)] text-white font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                                                    class="px-1.5 py-0.5 rounded cursor-pointer transition-colors">
+                                                Viewer
+                                            </button>
+                                        </div>
+
+                                        <!-- History hours switcher -->
+                                        <div class="inline-flex rounded border border-[var(--border-color)] p-0.5 bg-[var(--bg-subtle)] text-[10px] font-mono">
+                                            <button type="button"
+                                                    @click="fetchStreamHistory(selectedStream.stream_id, 1)"
+                                                    :class="streamHistoryHours === 1 ? 'bg-zinc-700 text-white font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                                                    class="px-1.5 py-0.5 rounded cursor-pointer transition-colors">
+                                                1 Jam
+                                            </button>
+                                            <button type="button"
+                                                    @click="fetchStreamHistory(selectedStream.stream_id, 6)"
+                                                    :class="streamHistoryHours === 6 ? 'bg-zinc-700 text-white font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                                                    class="px-1.5 py-0.5 rounded cursor-pointer transition-colors">
+                                                6 Jam
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- CHART 1: INGEST BITRATE (Mbps) -->
+                                <div x-show="activeChartTab === 'all' || activeChartTab === 'bitrate'" class="space-y-1.5">
+                                    <div class="flex items-center justify-between text-[11px] font-mono">
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="w-2 h-2 rounded bg-[#0c828c]"></span>
+                                            <span class="font-semibold text-[var(--text-main)]">Ingest Bitrate (Mbps)</span>
+                                        </div>
+                                        <span class="text-[var(--text-muted)] text-[10px]">
+                                            Terbaru: <strong class="text-[#0c828c]" x-text="(selectedStream.bitrate_mbps ?? 0) + ' Mbps'"></strong>
+                                        </span>
+                                    </div>
+                                    <div class="h-28 w-full relative bg-[var(--bg-subtle)]/40 rounded p-1">
+                                        <canvas id="chart-stream-bitrate"></canvas>
+                                    </div>
+                                </div>
+
+                                <!-- CHART 2: STREAM SPEED -->
+                                <div x-show="activeChartTab === 'all' || activeChartTab === 'speed'" class="space-y-1.5 pt-1">
+                                    <div class="flex items-center justify-between text-[11px] font-mono">
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="w-2 h-2 rounded bg-[#d97706]"></span>
+                                            <span class="font-semibold text-[var(--text-main)]">Stream Ingest Speed</span>
+                                        </div>
+                                        <span class="text-[var(--text-muted)] text-[10px]">
+                                            Terbaru: <strong class="text-[#d97706]" x-text="(selectedStream.speed ?? 0) + 'x'"></strong> (Ideal: 1.0x)
+                                        </span>
+                                    </div>
+                                    <div class="h-28 w-full relative bg-[var(--bg-subtle)]/40 rounded p-1">
+                                        <canvas id="chart-stream-speed"></canvas>
+                                    </div>
+                                </div>
+
+                                <!-- CHART 3: VIEWERS -->
+                                <div x-show="activeChartTab === 'all' || activeChartTab === 'viewers'" class="space-y-1.5 pt-1">
+                                    <div class="flex items-center justify-between text-[11px] font-mono">
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="w-2 h-2 rounded bg-[#9333ea]"></span>
+                                            <span class="font-semibold text-[var(--text-main)]">Live Watchers / Viewers</span>
+                                        </div>
+                                        <span class="text-[var(--text-muted)] text-[10px]">
+                                            Terbaru: <strong class="text-[#9333ea]" x-text="(selectedStream.total_viewers ?? 0) + ' viewer'"></strong>
+                                        </span>
+                                    </div>
+                                    <div class="h-28 w-full relative bg-[var(--bg-subtle)]/40 rounded p-1">
+                                        <canvas id="chart-stream-viewers"></canvas>
+                                    </div>
+                                </div>
+
+                                <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right pt-1 border-t border-[var(--border-color)]">
+                                    Pembaruan otomatis tiap 2 detik via SSE &bull; Disimpan ke SQLite
                                 </div>
                             </div>
 
@@ -453,6 +972,10 @@
 
                             <!-- Technical Properties -->
                             <div class="space-y-2 pt-2 border-t border-[var(--border-color)] text-xs font-mono">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-[var(--text-muted)]">Resolusi Video:</span>
+                                    <span class="font-semibold text-[var(--text-main)]" x-text="selectedStream.resolution"></span>
+                                </div>
                                 <div class="flex items-center justify-between">
                                     <span class="text-[var(--text-muted)]">Tipe Stream:</span>
                                     <span class="font-semibold text-[var(--text-main)]" x-text="selectedStream.stream_type"></span>

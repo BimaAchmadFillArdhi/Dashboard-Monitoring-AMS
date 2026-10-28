@@ -111,6 +111,23 @@ async def applications_page(request: Request):
     )
 
 
+@router.get("/applications/{app_name}/streams/{stream_id}")
+async def stream_detail_page(request: Request, app_name: str, stream_id: str):
+    user = await get_optional_user(request)
+    return templates.TemplateResponse(
+        request=request,
+        name="pages/stream_detail.html",
+        context={
+            "title": f"{stream_id} - Monitoring CCTV - {settings.APP_NAME}",
+            "page_title": f"Detail Stream CCTV: {stream_id}",
+            "active_page": "applications",
+            "app_name": app_name,
+            "stream_id": stream_id,
+            "user": user,
+        },
+    )
+
+
 @router.get("/logs")
 async def logs_page(request: Request):
     user = await get_optional_user(request)

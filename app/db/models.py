@@ -3,6 +3,7 @@ from sqlalchemy import (
     Column,
     Integer,
     BigInteger,
+    Float,
     String,
     Text,
     DateTime,
@@ -75,3 +76,49 @@ class AppUser(Base):
     password_hash = Column(String(255), nullable=False)
     role = Column(String(32), default="operator", nullable=False)  # admin, operator
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ServerMetricHistory(Base):
+    __tablename__ = "server_metrics_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ts = Column(BigInteger, nullable=False)  # Epoch milliseconds
+    cpu_percent = Column(Float, nullable=False, default=0.0)
+    cpu_load_avg = Column(Float, nullable=False, default=0.0)
+    system_memory_percent = Column(Float, nullable=False, default=0.0)
+    system_memory_used_gb = Column(Float, nullable=False, default=0.0)
+    jvm_heap_used_mb = Column(Float, nullable=False, default=0.0)
+    disk_percent = Column(Float, nullable=False, default=0.0)
+    disk_used_gb = Column(Float, nullable=False, default=0.0)
+    total_live_streams = Column(Integer, nullable=False, default=0)
+    total_viewers = Column(Integer, nullable=False, default=0)
+    db_query_avg_ms = Column(Float, nullable=False, default=0.0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_server_metrics_history_ts", "ts"),
+    )
+
+
+class StreamMetricHistory(Base):
+    __tablename__ = "stream_metrics_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ts = Column(BigInteger, nullable=False)  # Epoch milliseconds
+    app_name = Column(String(64), nullable=False)
+    stream_id = Column(String(128), nullable=False)
+    status = Column(String(32), nullable=False, default="finished")
+    bitrate = Column(Integer, nullable=False, default=0)         # in bps
+    bitrate_mbps = Column(Float, nullable=False, default=0.0)    # in Mbps
+    speed = Column(Float, nullable=False, default=0.0)
+    total_viewers = Column(Integer, nullable=False, default=0)
+    hls_viewers = Column(Integer, nullable=False, default=0)
+    webrtc_viewers = Column(Integer, nullable=False, default=0)
+    dash_viewers = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_stream_metrics_ts", "ts"),
+        Index("ix_stream_metrics_app_stream_ts", "app_name", "stream_id", "ts"),
+    )
+

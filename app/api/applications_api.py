@@ -1,5 +1,6 @@
 import json
 import asyncio
+from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
@@ -36,6 +37,22 @@ async def get_app_streams(
     )
 
 
+@router.get("/{app_name}/vods")
+async def get_app_vods(
+    app_name: str,
+    offset: int = Query(0, ge=0),
+    size: int = Query(50, ge=1, le=100),
+    q: Optional[str] = Query(None, description="Pencarian nama VoD atau streamId"),
+):
+    """Fetch VoD recorded files for an application."""
+    return await app_service.get_vods_for_app(
+        app_name=app_name,
+        offset=offset,
+        size=size,
+        search_q=q,
+    )
+
+
 @router.get("/{app_name}/streams/{stream_id}")
 async def get_stream_detail(
     app_name: str,
@@ -47,6 +64,23 @@ async def get_stream_detail(
     if not detail:
         raise HTTPException(status_code=404, detail="Stream tidak ditemukan")
     return detail
+
+
+@router.get("/{app_name}/streams/{stream_id}/history")
+async def get_stream_history(
+    app_name: str,
+    stream_id: str,
+    hours: int = Query(1, ge=1, le=24, description="Rentang riwayat dalam jam"),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Fetch historical bitrate (Mbps), speed, and viewer metrics for a specific CCTV stream."""
+    history = await app_service.get_stream_metric_history(
+        session=session,
+        app_name=app_name,
+        stream_id=stream_id,
+        hours=hours,
+    )
+    return history
 
 
 @router.get("/{app_name}/streams/{stream_id}/live-sse")
@@ -61,15 +95,23 @@ async def sse_stream_drawer(
             while True:
                 detail = await app_service.get_stream_detail(app_name, stream_id, session)
                 if detail:
+                    # Persist metric snapshot periodically to SQLite
+                    await app_service.save_stream_metric(session, app_name, stream_id, detail)
+
                     payload = {
+                        "stream_id": stream_id,
                         "bitrate": detail["bitrate"],
+                        "bitrate_mbps": detail.get("bitrate_mbps", 0.0),
+                        "bitrate_kbps": detail.get("bitrate_kbps", 0.0),
                         "speed": detail["speed"],
                         "total_viewers": detail["total_viewers"],
                         "hls_viewers": detail["hls_viewers"],
                         "webrtc_viewers": detail["webrtc_viewers"],
+                        "dash_viewers": detail.get("dash_viewers", 0),
                         "status": detail["status"],
                         "health_status": detail["health_status"],
                         "health_tone": detail["health_tone"],
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
                 await asyncio.sleep(2.0)

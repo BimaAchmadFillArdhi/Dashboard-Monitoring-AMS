@@ -41,7 +41,7 @@ class LogService:
     @staticmethod
     def _parse_date_range_ms(date_str: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
         """Parse YYYY-MM-DD or return None for all dates."""
-        if not date_str:
+        if not date_str or date_str.upper() == "ALL":
             return None, None
         try:
             # Handle single day
@@ -51,6 +51,38 @@ class LogService:
             return start_ms, end_ms
         except Exception:
             return None, None
+
+    async def get_filter_options(self, session: AsyncSession) -> Dict[str, List[str]]:
+        """Return distinct stream IDs and app names available in the system."""
+        stmt_streams = (
+            select(LogEntry.stream_id)
+            .where(LogEntry.stream_id.isnot(None))
+            .distinct()
+            .order_by(LogEntry.stream_id.asc())
+            .limit(100)
+        )
+        res_streams = await session.execute(stmt_streams)
+        streams = [s[0] for s in res_streams.all() if s[0]]
+
+        stmt_apps = (
+            select(LogEntry.app_name)
+            .where(LogEntry.app_name.isnot(None))
+            .distinct()
+            .order_by(LogEntry.app_name.asc())
+        )
+        res_apps = await session.execute(stmt_apps)
+        apps = [a[0] for a in res_apps.all() if a[0]]
+
+        # Ensure known apps are included
+        default_apps = ["atcs", "atcs-kota", "cctv-sekolah", "LiveApp", "WebRTCApp"]
+        for da in default_apps:
+            if da not in apps:
+                apps.append(da)
+
+        return {
+            "stream_ids": streams,
+            "app_names": sorted(apps),
+        }
 
     async def query_logs(
         self,
@@ -110,7 +142,6 @@ class LogService:
         # 3. Handle Deduplication Query vs Flat Query
         if dedupe:
             # Group by fingerprint, taking max(ts), count(*)
-            # When cursor is given, filter by ts < cursor_ts
             stmt_grp = (
                 select(
                     LogEntry.fingerprint,

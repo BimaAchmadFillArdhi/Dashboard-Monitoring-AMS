@@ -24,10 +24,10 @@
     <!-- Tailwind CSS -->
     <link rel="stylesheet" href="/static/css/app.css">
 
-    <!-- Vendor Scripts -->
+    <!-- Vendor Scripts: Load Chart.js first so Chart is defined when Alpine components mount -->
+    <script src="/static/vendor/chart.js"></script>
     <script src="/static/vendor/htmx.js" defer></script>
     <script src="/static/vendor/alpine.js" defer></script>
-    <script src="/static/vendor/chart.js" defer></script>
 
     {% block extra_head %}{% endblock %}
 </head>
