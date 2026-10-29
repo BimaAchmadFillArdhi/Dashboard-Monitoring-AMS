@@ -7,9 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
 from app.services.dashboard_service import get_dashboard_service, DashboardSnapshot
+from app.services.application_service import get_application_service
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard API"])
 dashboard_service = get_dashboard_service()
+app_service = get_application_service()
 
 
 class DashboardBroadcaster:
@@ -49,6 +51,15 @@ async def get_dashboard_history(
 ):
     """Fetch historical system metrics (CPU, RAM, JVM, Disk, Streams, Viewers) from database."""
     return await dashboard_service.get_historical_metrics(session=session, hours=hours)
+
+
+@router.get("/system-streams-history")
+async def get_system_streams_history(
+    hours: int = Query(1, ge=1, le=168, description="Rentang riwayat dalam jam"),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Fetch system-wide aggregated stream metrics history (total bitrate, active/inactive streams, total viewers)."""
+    return await app_service.get_system_stream_history(session=session, hours=hours)
 
 
 @router.get("/server-info")

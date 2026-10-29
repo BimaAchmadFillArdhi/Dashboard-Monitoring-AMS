@@ -14,6 +14,7 @@
         activeChartTab: 'all', // 'all' | 'bitrate' | 'speed' | 'viewers'
         historyHours: 1,
         isLoadingHistory: false,
+        historyData: null,
         chartBitrate: null,
         chartSpeed: null,
         chartViewers: null,
@@ -21,9 +22,13 @@
         lastUpdatedTime: '-',
 
         async init() {
-            await this.fetchStreamDetail();
+            // Inisialisasi canvas grafik terlebih dahulu
             this.initCharts();
+            // Ambil informasi stream saat ini
+            await this.fetchStreamDetail();
+            // Ambil riwayat historis metrik
             await this.fetchHistory(this.historyHours);
+            // Hubungkan real-time SSE
             this.connectSSE();
         },
 
@@ -57,6 +62,7 @@
                 const res = await fetch(`/api/applications/${encodeURIComponent(this.appName)}/streams/${encodeURIComponent(this.streamId)}/history?hours=${hours}`);
                 if (res.ok) {
                     const data = await res.json();
+                    this.historyData = data;
                     this.applyHistory(data);
                 }
             } catch (err) {
@@ -68,28 +74,45 @@
 
         applyHistory(data) {
             if (!data) return;
+            this.historyData = data;
             const labels = data.timestamps || [];
 
+            // 1. Bitrate Chart
             if (this.chartBitrate) {
                 this.chartBitrate.data.labels = [...labels];
                 this.chartBitrate.data.datasets[0].data = [...(data.bitrate_mbps || [])];
-                this.chartBitrate.update('none');
+                this.chartBitrate.update();
             }
+
+            // 2. Speed Chart (dengan garis referensi ideal 1.0x dan sanitasi anomali DTS)
             if (this.chartSpeed) {
                 this.chartSpeed.data.labels = [...labels];
-                this.chartSpeed.data.datasets[0].data = [...(data.speed || [])];
-                this.chartSpeed.update('none');
+                const cleanSpeed = data.speed_filtered || (data.speed || []).map(v => (v < 0 ? 0.0 : Math.min(v, 3.0)));
+                this.chartSpeed.data.datasets[0].data = [...cleanSpeed];
+                this.chartSpeed.data.datasets[1].data = labels.map(() => 1.0);
+                this.chartSpeed.update();
             }
+
+            // 3. Viewers Chart (Bilangan bulat)
             if (this.chartViewers) {
                 this.chartViewers.data.labels = [...labels];
                 this.chartViewers.data.datasets[0].data = [...(data.viewers || [])];
-                this.chartViewers.update('none');
+                this.chartViewers.update();
             }
         },
 
         initCharts() {
             if (typeof Chart === 'undefined') {
-                setTimeout(() => this.initCharts(), 100);
+                setTimeout(() => this.initCharts(), 80);
+                return;
+            }
+
+            const canvasBitrate = document.getElementById('chart-detail-bitrate');
+            const canvasSpeed = document.getElementById('chart-detail-speed');
+            const canvasViewers = document.getElementById('chart-detail-viewers');
+
+            if (!canvasBitrate || !canvasSpeed || !canvasViewers) {
+                setTimeout(() => this.initCharts(), 80);
                 return;
             }
 
@@ -99,7 +122,7 @@
                 animation: false,
                 elements: {
                     line: { tension: 0.25, borderWidth: 2 },
-                    point: { radius: 1.5, hitRadius: 8, hoverRadius: 5 }
+                    point: { radius: 2, hitRadius: 8, hoverRadius: 5 }
                 },
                 scales: {
                     x: {
@@ -133,7 +156,7 @@
             };
 
             // 1. Bitrate Chart (Mbps)
-            const ctxBitrate = document.getElementById('chart-detail-bitrate')?.getContext('2d');
+            const ctxBitrate = canvasBitrate.getContext('2d');
             if (ctxBitrate && !this.chartBitrate) {
                 this.chartBitrate = new Chart(ctxBitrate, {
                     type: 'line',
@@ -163,27 +186,50 @@
                 });
             }
 
-            // 2. Speed Chart
-            const ctxSpeed = document.getElementById('chart-detail-speed')?.getContext('2d');
+            // 2. Speed Chart dengan Garis Referensi Ideal 1.0x
+            const ctxSpeed = canvasSpeed.getContext('2d');
             if (ctxSpeed && !this.chartSpeed) {
                 this.chartSpeed = new Chart(ctxSpeed, {
                     type: 'line',
                     data: {
                         labels: [],
-                        datasets: [{
-                            label: 'Ingest Speed',
-                            data: [],
-                            borderColor: '#d97706',
-                            backgroundColor: 'rgba(217, 119, 6, 0.08)',
-                            fill: true,
-                        }]
+                        datasets: [
+                            {
+                                label: 'Ingest Speed (x)',
+                                data: [],
+                                borderColor: '#d97706',
+                                backgroundColor: 'rgba(217, 119, 6, 0.08)',
+                                fill: true,
+                            },
+                            {
+                                label: 'Target Ideal (1.0x)',
+                                data: [],
+                                borderColor: '#10b981',
+                                borderDash: [6, 4],
+                                borderWidth: 1.5,
+                                pointRadius: 0,
+                                fill: false,
+                            }
+                        ]
                     },
                     options: {
                         ...baseOptions,
+                        plugins: {
+                            ...baseOptions.plugins,
+                            legend: {
+                                display: true,
+                                labels: {
+                                    font: { family: 'monospace', size: 10 },
+                                    color: '#888',
+                                    boxWidth: 12,
+                                }
+                            }
+                        },
                         scales: {
                             ...baseOptions.scales,
                             y: {
                                 ...baseOptions.scales.y,
+                                suggestedMax: 2.0,
                                 ticks: {
                                     ...baseOptions.scales.y.ticks,
                                     callback: (val) => val + 'x'
@@ -194,15 +240,15 @@
                 });
             }
 
-            // 3. Viewers Chart
-            const ctxViewers = document.getElementById('chart-detail-viewers')?.getContext('2d');
+            // 3. Viewers Chart (Bilangan bulat)
+            const ctxViewers = canvasViewers.getContext('2d');
             if (ctxViewers && !this.chartViewers) {
                 this.chartViewers = new Chart(ctxViewers, {
                     type: 'line',
                     data: {
                         labels: [],
                         datasets: [{
-                            label: 'Viewers',
+                            label: 'Jumlah Penonton',
                             data: [],
                             borderColor: '#9333ea',
                             backgroundColor: 'rgba(147, 51, 234, 0.08)',
@@ -224,6 +270,11 @@
                         }
                     }
                 });
+            }
+
+            // Jika data riwayat sudah diterima sebelumnya, langsung terapkan
+            if (this.historyData) {
+                this.applyHistory(this.historyData);
             }
         },
 
@@ -251,7 +302,7 @@
                     this.lastUpdatedTime = new Date().toLocaleTimeString('id-ID');
 
                     const ts = update.timestamp || new Date().toLocaleTimeString('id-ID', { hour12: false });
-                    const maxLivePoints = 40;
+                    const maxLivePoints = 60;
 
                     // Update Bitrate Chart
                     if (this.chartBitrate) {
@@ -267,10 +318,14 @@
                     // Update Speed Chart
                     if (this.chartSpeed) {
                         this.chartSpeed.data.labels.push(ts);
-                        this.chartSpeed.data.datasets[0].data.push(this.stream.speed);
+                        const rawS = this.stream.speed ?? 0;
+                        const sFilt = rawS < 0 ? 0.0 : Math.min(rawS, 3.0);
+                        this.chartSpeed.data.datasets[0].data.push(sFilt);
+                        this.chartSpeed.data.datasets[1].data.push(1.0);
                         if (this.chartSpeed.data.labels.length > maxLivePoints) {
                             this.chartSpeed.data.labels.shift();
                             this.chartSpeed.data.datasets[0].data.shift();
+                            this.chartSpeed.data.datasets[1].data.shift();
                         }
                         this.chartSpeed.update('none');
                     }
@@ -302,9 +357,11 @@
         setChartTab(tab) {
             this.activeChartTab = tab;
             this.$nextTick(() => {
-                if (this.chartBitrate) this.chartBitrate.resize();
-                if (this.chartSpeed) this.chartSpeed.resize();
-                if (this.chartViewers) this.chartViewers.resize();
+                setTimeout(() => {
+                    if (this.chartBitrate) { this.chartBitrate.resize(); this.chartBitrate.update(); }
+                    if (this.chartSpeed) { this.chartSpeed.resize(); this.chartSpeed.update(); }
+                    if (this.chartViewers) { this.chartViewers.resize(); this.chartViewers.update(); }
+                }, 50);
             });
         }
      }">
@@ -534,6 +591,14 @@
             </div>
         </div>
 
+        <!-- Empty State Notice if newly started and 0 history points -->
+        <template x-if="historyData && historyData.points_count === 0">
+            <div class="p-3 rounded border border-cyan-200 dark:border-cyan-900 bg-cyan-50/50 dark:bg-cyan-950/20 text-xs font-mono text-cyan-800 dark:text-cyan-300 flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-cyan-500 animate-pulse"></span>
+                <span>Sedang mengumpulkan sampel data historis dari Ant Media Server... Grafik akan otomatis terisi dalam beberapa detik.</span>
+            </div>
+        </template>
+
         <!-- 1. CHART: INGEST BITRATE (Mbps) -->
         <div x-show="activeChartTab === 'all' || activeChartTab === 'bitrate'" class="space-y-2">
             <div class="flex items-center justify-between text-xs font-mono">
@@ -545,7 +610,7 @@
                     Bitrate Terkini: <strong class="text-[#0c828c]" x-text="stream ? (stream.bitrate_mbps ?? 0) + ' Mbps' : '0 Mbps'"></strong>
                 </span>
             </div>
-            <div class="h-44 w-full relative bg-[var(--bg-subtle)]/40 rounded border border-[var(--border-color)] p-2">
+            <div class="h-48 w-full relative bg-[var(--bg-subtle)]/40 rounded border border-[var(--border-color)] p-2">
                 <canvas id="chart-detail-bitrate"></canvas>
             </div>
             <div class="text-[10px] text-[var(--text-subtle)] font-mono">
@@ -564,11 +629,11 @@
                     Kecepatan Terkini: <strong class="text-[#d97706]" x-text="stream ? (stream.speed ?? 0) + 'x' : '0x'"></strong> (Ideal: 1.0x)
                 </span>
             </div>
-            <div class="h-44 w-full relative bg-[var(--bg-subtle)]/40 rounded border border-[var(--border-color)] p-2">
+            <div class="h-48 w-full relative bg-[var(--bg-subtle)]/40 rounded border border-[var(--border-color)] p-2">
                 <canvas id="chart-detail-speed"></canvas>
             </div>
             <div class="text-[10px] text-[var(--text-subtle)] font-mono">
-                Rasio kecepatan penerimaan frame RTSP. Nilai stabil mendekati ~1.00x menandakan transmisi real-time lancar.
+                Garis oranye: Kecepatan ingest aktual. Garis putus-putus hijau: Target kecepatan ideal 1.00x. Anomali lonjakan DTS dinormalisasi agar skala grafik terbaca.
             </div>
         </div>
 
@@ -583,11 +648,11 @@
                     Penonton Terkini: <strong class="text-[#9333ea]" x-text="stream ? (stream.total_viewers ?? 0) + ' Viewer' : '0 Viewer'"></strong>
                 </span>
             </div>
-            <div class="h-44 w-full relative bg-[var(--bg-subtle)]/40 rounded border border-[var(--border-color)] p-2">
+            <div class="h-48 w-full relative bg-[var(--bg-subtle)]/40 rounded border border-[var(--border-color)] p-2">
                 <canvas id="chart-detail-viewers"></canvas>
             </div>
             <div class="text-[10px] text-[var(--text-subtle)] font-mono">
-                Jumlah pengguna yang memutar siaran kamera ini secara langsung via WebRTC, HLS, dan DASH.
+                Jumlah pengguna yang memutar siaran kamera ini secara langsung via WebRTC, HLS, dan DASH (bilangan bulat).
             </div>
         </div>
     </div>
