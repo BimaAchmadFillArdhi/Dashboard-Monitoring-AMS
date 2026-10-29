@@ -155,10 +155,33 @@ class DashboardService:
             select(ServerMetricHistory)
             .where(ServerMetricHistory.ts >= cutoff_ms)
             .order_by(asc(ServerMetricHistory.ts))
-            .limit(500)
         )
         res = await session.execute(stmt)
-        rows = res.scalars().all()
+        rows = list(res.scalars().all())
+
+        # Fallback to in-memory history if 1 hour selected and no rows in DB yet
+        if not rows:
+            if hours <= 1:
+                return self.get_history()
+            return RingBufferHistory(
+                timestamps=[],
+                cpu=[],
+                memory_system=[],
+                jvm_heap=[],
+                live_streams=[],
+                viewers=[],
+                db_query_ms=[],
+            )
+
+        # Downsample evenly if there are more than 120 points to ensure smooth rendering and full range coverage
+        total_rows = len(rows)
+        target_points = 120
+        if total_rows > target_points:
+            step = total_rows / target_points
+            sampled_indices = [int(i * step) for i in range(target_points)]
+            if (total_rows - 1) not in sampled_indices:
+                sampled_indices[-1] = total_rows - 1
+            rows = [rows[i] for i in sampled_indices]
 
         timestamps = []
         cpu = []
@@ -168,9 +191,10 @@ class DashboardService:
         viewers = []
         db_ms = []
 
+        fmt = "%H:%M" if hours <= 6 else "%d/%m %H:%M"
+
         for r in rows:
             dt = datetime.fromtimestamp(r.ts / 1000)
-            fmt = "%H:%M:%S" if hours <= 2 else "%d/%m %H:%M"
             timestamps.append(dt.strftime(fmt))
             cpu.append(r.cpu_percent)
             mem.append(r.system_memory_percent)
@@ -178,10 +202,6 @@ class DashboardService:
             streams.append(r.total_live_streams)
             viewers.append(r.total_viewers)
             db_ms.append(r.db_query_avg_ms)
-
-        # Fallback to in-memory history if no rows in DB yet
-        if not timestamps:
-            return self.get_history()
 
         return RingBufferHistory(
             timestamps=timestamps,
@@ -192,7 +212,6 @@ class DashboardService:
             viewers=viewers,
             db_query_ms=db_ms,
         )
-
     async def cleanup_old_metrics(self, session: AsyncSession, retention_days: int = 7) -> int:
         """Delete metrics older than retention days."""
         if retention_days <= 0:

@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "description": "CCTV Monitoring Dashboard for Ant Media Server",
   "scripts": {
-    "build:css": "npx @tailwindcss/cli -i ./app/static/css/input.css -o ./app/static/css/app.css --minify",
-    "watch:css": "npx @tailwindcss/cli -i ./app/static/css/input.css -o ./app/static/css/app.css --watch"
+    "build:css": "node node_modules/@tailwindcss/cli/dist/index.mjs -i ./app/static/css/input.css -o ./app/static/css/app.css --minify",
+    "watch:css": "node node_modules/@tailwindcss/cli/dist/index.mjs -i ./app/static/css/input.css -o ./app/static/css/app.css --watch"
   },
   "dependencies": {
     "alpinejs": "^3.14.8",
