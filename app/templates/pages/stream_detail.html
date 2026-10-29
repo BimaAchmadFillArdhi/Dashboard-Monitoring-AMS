@@ -441,17 +441,17 @@
             <div class="flex items-center gap-3">
                 <span class="inline-flex items-center gap-2 px-3 py-1 rounded text-xs font-semibold border"
                       :class="{
-                          'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800': stream.health_status === 'Sehat',
-                          'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800': stream.health_status === 'Perhatian',
-                          'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800': stream.health_status === 'Bermasalah',
-                          'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700': stream.health_status === 'Offline'
+                          'badge-success': stream.health_status === 'Sehat',
+                          'badge-warning': stream.health_status === 'Perhatian',
+                          'badge-danger': stream.health_status === 'Bermasalah',
+                          'badge-neutral': stream.health_status === 'Offline'
                       }">
                     <span class="w-2 h-2 rounded-full"
                           :class="{
-                              'bg-emerald-500': stream.health_status === 'Sehat',
-                              'bg-amber-500': stream.health_status === 'Perhatian',
-                              'bg-red-500': stream.health_status === 'Bermasalah',
-                              'bg-zinc-400': stream.health_status === 'Offline'
+                              'badge-dot-success': stream.health_status === 'Sehat',
+                              'badge-dot-warning': stream.health_status === 'Perhatian',
+                              'badge-dot-danger': stream.health_status === 'Bermasalah',
+                              'badge-dot-neutral': stream.health_status === 'Offline'
                           }"></span>
                     <span>Kondisi: <span x-text="stream.health_status"></span></span>
                 </span>

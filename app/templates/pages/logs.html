@@ -294,10 +294,9 @@
                         <div class="space-y-1">
                             <div class="flex items-center justify-between gap-2">
                                 <span class="font-mono text-xs font-bold text-[var(--text-main)] truncate" x-text="p.stream_id"></span>
-                                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium"
-                                      :class="p.status === 'Bermasalah' ? 'bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800' : 'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800'"
+                                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border"
+                                      :class="p.status === 'Bermasalah' ? 'badge-danger' : 'badge-warning'"
                                       x-text="p.status"></span>
-                            </div>
                             <p class="text-[11px] text-[var(--text-main)] line-clamp-2" x-text="p.problem_summary"></p>
                         </div>
                         <div class="pt-2 border-t border-[var(--border-color)] flex items-center justify-between text-[10px] text-[var(--text-muted)] font-mono">
@@ -390,33 +389,29 @@
 
                 <button type="button"
                         @click="level = 'ERROR'; fetchLogs(true)"
-                        :class="level === 'ERROR' ? 'bg-rose-600 text-white font-semibold' : 'bg-[var(--bg-subtle)] text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40'"
-                        class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer flex items-center gap-1.5">
-                    <span>ERROR</span>
+                        :class="level === 'ERROR' ? 'bg-rose-600 text-white font-semibold' : 'badge-danger'"
+                        class="px-2.5 py-1 rounded border transition-colors cursor-pointer flex items-center gap-1.5">
                     <span class="font-mono text-[10px] font-bold" x-text="counts.ERROR || 0"></span>
                 </button>
 
                 <button type="button"
                         @click="level = 'WARN'; fetchLogs(true)"
-                        :class="level === 'WARN' ? 'bg-amber-600 text-white font-semibold' : 'bg-[var(--bg-subtle)] text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40'"
-                        class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer flex items-center gap-1.5">
-                    <span>WARN</span>
+                        :class="level === 'WARN' ? 'bg-amber-600 text-white font-semibold' : 'badge-warning'"
+                        class="px-2.5 py-1 rounded border transition-colors cursor-pointer flex items-center gap-1.5">
                     <span class="font-mono text-[10px] font-bold" x-text="counts.WARN || 0"></span>
                 </button>
 
                 <button type="button"
                         @click="level = 'INFO'; fetchLogs(true)"
-                        :class="level === 'INFO' ? 'bg-[var(--accent)] text-white font-semibold' : 'bg-[var(--bg-subtle)] text-[var(--accent-text)] hover:bg-[var(--accent-soft)]'"
-                        class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer flex items-center gap-1.5">
-                    <span>INFO</span>
+                        :class="level === 'INFO' ? 'bg-[var(--accent)] text-white font-semibold' : 'badge-info'"
+                        class="px-2.5 py-1 rounded border transition-colors cursor-pointer flex items-center gap-1.5">
                     <span class="font-mono text-[10px]" x-text="counts.INFO || 0"></span>
                 </button>
 
                 <button type="button"
                         @click="level = 'DEBUG'; fetchLogs(true)"
-                        :class="level === 'DEBUG' ? 'bg-zinc-700 text-white font-semibold' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)]'"
-                        class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer flex items-center gap-1.5">
-                    <span>DEBUG</span>
+                        :class="level === 'DEBUG' ? 'bg-zinc-700 text-white font-semibold' : 'badge-neutral'"
+                        class="px-2.5 py-1 rounded border transition-colors cursor-pointer flex items-center gap-1.5">
                     <span class="font-mono text-[10px]" x-text="counts.DEBUG || 0"></span>
                 </button>
             </div>
@@ -523,13 +518,12 @@
                             <td class="px-3.5 py-2.5 align-top whitespace-nowrap">
                                 <span class="inline-flex items-center px-1.5 py-0.5 rounded font-mono font-bold text-[10px]"
                                       :class="{
-                                          'bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800': log.level === 'ERROR',
-                                          'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800': log.level === 'WARN',
-                                          'bg-[var(--accent-soft)] text-[var(--accent-text)] border border-[var(--accent-border)]': log.level === 'INFO',
-                                          'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700': log.level === 'DEBUG'
+                                          'badge-danger': log.level === 'ERROR',
+                                          'badge-warning': log.level === 'WARN',
+                                          'badge-info': log.level === 'INFO',
+                                          'badge-neutral': log.level === 'DEBUG'
                                       }"
                                       x-text="log.level"></span>
-                            </td>
 
                             <!-- CCTV / Stream ID -->
                             <td class="px-3.5 py-2.5 align-top">
@@ -590,17 +584,17 @@
                             <td class="px-3.5 py-2.5 align-top text-right whitespace-nowrap">
                                 <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium border"
                                       :class="{
-                                          'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800': log.severity_group === 'masalah',
-                                          'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800': log.severity_group === 'perhatian',
-                                          'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800': log.severity_group === 'info',
-                                          'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700': log.severity_group === 'tidak_dikenal'
+                                          'badge-danger': log.severity_group === 'masalah',
+                                          'badge-warning': log.severity_group === 'perhatian',
+                                          'badge-info': log.severity_group === 'info',
+                                          'badge-neutral': log.severity_group === 'tidak_dikenal'
                                       }">
                                     <span class="w-1.5 h-1.5 rounded-full"
                                           :class="{
-                                              'bg-red-500': log.severity_group === 'masalah',
-                                              'bg-amber-500': log.severity_group === 'perhatian',
-                                              'bg-emerald-500': log.severity_group === 'info',
-                                              'bg-zinc-400': log.severity_group === 'tidak_dikenal'
+                                              'badge-dot-danger': log.severity_group === 'masalah',
+                                              'badge-dot-warning': log.severity_group === 'perhatian',
+                                              'badge-dot-info': log.severity_group === 'info',
+                                              'badge-dot-neutral': log.severity_group === 'tidak_dikenal'
                                           }"></span>
                                     <span x-text="log.severity_group === 'masalah' ? 'Bermasalah' : (log.severity_group === 'perhatian' ? 'Perhatian' : (log.severity_group === 'info' ? 'Info' : 'Lainnya'))"></span>
                                 </span>

@@ -4,6 +4,7 @@
 {% import "components/badges.html" as badges with context %}
 {% import "components/tables.html" as tables with context %}
 {% import "components/panels.html" as panels with context %}
+{% import "components/sidebar.html" as sidebar_comp with context %}
 
 {# Button aliases #}
 {% macro button(text="", variant="secondary", size="md", type="button", disabled=false, loading=false, id="", onclick="", extra_classes="", icon_left="", icon_right="") %}
@@ -98,4 +99,9 @@
 
 {% macro skeleton(height_cls="h-4", width_cls="w-full") %}
     {{ panels.skeleton(height_cls, width_cls) }}
+{% endmacro %}
+
+{# Sidebar alias #}
+{% macro sidebar(active_page="dashboard") %}
+    {{ sidebar_comp.render_sidebar(active_page) }}
 {% endmacro %}

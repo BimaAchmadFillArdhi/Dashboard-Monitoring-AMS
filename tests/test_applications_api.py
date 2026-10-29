@@ -8,7 +8,7 @@ def test_applications_page_render():
     resp = client.get("/applications")
     assert resp.status_code == 200
     assert "Applications &amp; Stream Monitoring" in resp.text or "Applications & Stream Monitoring" in resp.text
-    assert "Daftar Aplikasi AMS" in resp.text
+    assert "Aplikasi Aktif:" in resp.text
     assert "Live Streams" in resp.text
     assert "VoD Rekaman" in resp.text
 
