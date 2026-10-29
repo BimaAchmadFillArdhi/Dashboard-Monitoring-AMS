@@ -23,6 +23,7 @@ settings = get_settings()
 
 bg_log_task: asyncio.Task | None = None
 bg_dashboard_task: asyncio.Task | None = None
+bg_stream_metrics_task: asyncio.Task | None = None
 dashboard_svc = get_dashboard_service()
 app_svc = get_application_service()
 ams_cli = get_ams_client()
@@ -135,6 +136,24 @@ async def background_dashboard_ticker():
         await asyncio.sleep(3.0)
 
 
+async def background_stream_metrics_collector():
+    """Background task polling all AMS stream metrics every 5s and persisting to SQLite."""
+    await asyncio.sleep(2.0)
+    interval = settings.STREAM_METRICS_INTERVAL_SECONDS
+    logger.info(f"[StreamCollector] Started background stream metrics collector loop ({interval}s interval)")
+
+    while True:
+        try:
+            async with AsyncSessionLocal() as session:
+                await app_svc.collect_all_streams_metrics(session)
+        except asyncio.CancelledError:
+            break
+        except Exception as err:
+            logger.warning(f"[StreamCollector] Error collecting stream metrics: {err}")
+
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize database schema
@@ -150,9 +169,10 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to warm up dashboard metrics from DB: {e}")
 
     # Start background tasks
-    global bg_log_task, bg_dashboard_task
+    global bg_log_task, bg_dashboard_task, bg_stream_metrics_task
     bg_log_task = asyncio.create_task(background_log_poller())
     bg_dashboard_task = asyncio.create_task(background_dashboard_ticker())
+    bg_stream_metrics_task = asyncio.create_task(background_stream_metrics_collector())
 
     yield
 
@@ -161,8 +181,10 @@ async def lifespan(app: FastAPI):
         bg_log_task.cancel()
     if bg_dashboard_task:
         bg_dashboard_task.cancel()
+    if bg_stream_metrics_task:
+        bg_stream_metrics_task.cancel()
 
-    await asyncio.gather(bg_log_task, bg_dashboard_task, return_exceptions=True)
+    await asyncio.gather(bg_log_task, bg_dashboard_task, bg_stream_metrics_task, return_exceptions=True)
 
 
 app = FastAPI(

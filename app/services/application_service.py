@@ -3,7 +3,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
-from sqlalchemy import select, delete, desc
+from sqlalchemy import select, delete, desc, asc, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.ams_client import get_ams_client
@@ -270,7 +270,7 @@ class ApplicationService:
         stream_id: str,
         hours: int = 1,
     ) -> Dict[str, Any]:
-        """Query stream metric history for chart display."""
+        """Query stream metric history for chart display with speed filtering and ideal reference line."""
         cutoff_ms = int((time.time() - (hours * 3600)) * 1000)
         stmt = (
             select(StreamMetricHistory)
@@ -280,21 +280,36 @@ class ApplicationService:
                 StreamMetricHistory.ts >= cutoff_ms,
             )
             .order_by(StreamMetricHistory.ts.asc())
-            .limit(300)
+            .limit(600)
         )
         res = await session.execute(stmt)
         records = res.scalars().all()
 
         timestamps = []
         bitrate_mbps = []
-        speed = []
+        speed_raw = []
+        speed_filtered = []
         viewers = []
 
         for r in records:
             dt = datetime.fromtimestamp(r.ts / 1000)
-            timestamps.append(dt.strftime("%H:%M:%S"))
-            bitrate_mbps.append(r.bitrate_mbps)
-            speed.append(r.speed)
+            fmt = "%H:%M:%S" if hours <= 2 else "%d/%m %H:%M"
+            timestamps.append(dt.strftime(fmt))
+            bitrate_mbps.append(round(r.bitrate_mbps, 2))
+            
+            raw_s = round(r.speed, 2)
+            speed_raw.append(raw_s)
+            
+            # Sanitization of speed anomalies from RTSP timestamp jitter / rollover
+            # Normal speed is ~1.0x. Values < 0 indicate DTS rollover/negative step.
+            # Values > 3.0 indicate massive catch-up packet bursts.
+            if raw_s < 0.0:
+                s_filt = 0.0
+            elif raw_s > 3.0:
+                s_filt = 3.0
+            else:
+                s_filt = raw_s
+            speed_filtered.append(s_filt)
             viewers.append(r.total_viewers)
 
         # If no records exist yet in history, fetch current stream detail to bootstrap chart
@@ -303,19 +318,151 @@ class ApplicationService:
             if detail:
                 dt_now = datetime.now().strftime("%H:%M:%S")
                 timestamps.append(dt_now)
-                bitrate_mbps.append(detail.get("bitrate_mbps", 0.0))
-                speed.append(detail.get("speed", 0.0))
+                b_val = detail.get("bitrate_mbps", 0.0)
+                bitrate_mbps.append(b_val)
+                raw_s = detail.get("speed", 0.0)
+                speed_raw.append(raw_s)
+                speed_filtered.append(max(0.0, min(raw_s, 3.0)) if raw_s >= 0 else 0.0)
                 viewers.append(detail.get("total_viewers", 0))
                 # Persist this bootstrap point
                 await self.save_stream_metric(session, app_name, stream_id, detail, force=True)
+
+        ideal_speed = [1.0] * len(timestamps)
 
         return {
             "stream_id": stream_id,
             "app_name": app_name,
             "timestamps": timestamps,
             "bitrate_mbps": bitrate_mbps,
-            "speed": speed,
+            "speed": speed_raw,
+            "speed_filtered": speed_filtered,
+            "ideal_speed": ideal_speed,
             "viewers": viewers,
+            "points_count": len(timestamps),
+        }
+
+    async def collect_all_streams_metrics(self, session: AsyncSession) -> Dict[str, Any]:
+        """Poll all streams from AMS and persist a synchronized snapshot for every stream in SQLite."""
+        apps = await ams_client.get_applications()
+        now_ms = int(time.time() * 1000)
+
+        total_system_bitrate_mbps = 0.0
+        active_streams = 0
+        inactive_streams = 0
+        total_viewers = 0
+        counted_stream_ids = set()
+
+        for app_name in apps:
+            try:
+                streams = await ams_client.get_broadcasts_list(app_name, offset=0, size=100)
+                for s in streams:
+                    sid = s.streamId
+                    if not sid:
+                        continue
+
+                    is_active = (s.status == "broadcasting")
+                    if is_active:
+                        bitrate_bps = s.bitrate or 0
+                        bitrate_mbps = round(bitrate_bps / 1_000_000.0, 2)
+                        speed_val = round(s.speed, 2) if s.speed is not None else 0.0
+                        v_count = s.total_viewers
+                    else:
+                        bitrate_bps = 0
+                        bitrate_mbps = 0.0
+                        speed_val = 0.0
+                        v_count = 0
+
+                    # Aggregate system totals for unique stream IDs
+                    if sid not in counted_stream_ids:
+                        counted_stream_ids.add(sid)
+                        if is_active:
+                            active_streams += 1
+                            total_system_bitrate_mbps += bitrate_mbps
+                            total_viewers += v_count
+                        else:
+                            inactive_streams += 1
+
+                    # Persist record to database for every stream
+                    rec = StreamMetricHistory(
+                        ts=now_ms,
+                        app_name=app_name,
+                        stream_id=sid,
+                        status=s.status or "finished",
+                        bitrate=bitrate_bps,
+                        bitrate_mbps=bitrate_mbps,
+                        speed=speed_val,
+                        total_viewers=v_count,
+                        hls_viewers=s.hlsViewerCount or 0,
+                        webrtc_viewers=s.webRTCViewerCount or 0,
+                        dash_viewers=s.dashViewerCount or 0,
+                    )
+                    session.add(rec)
+            except Exception:
+                pass
+
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
+
+        return {
+            "total_system_bitrate_mbps": round(total_system_bitrate_mbps, 2),
+            "active_streams": active_streams,
+            "inactive_streams": inactive_streams,
+            "total_viewers": total_viewers,
+            "total_streams_sampled": len(counted_stream_ids),
+        }
+
+    async def get_system_stream_history(self, session: AsyncSession, hours: int = 1) -> Dict[str, Any]:
+        """Aggregate total system bitrate, active/inactive streams, and total viewers over time."""
+        cutoff_ms = int((time.time() - (hours * 3600)) * 1000)
+
+        stmt = (
+            select(
+                StreamMetricHistory.ts,
+                func.sum(
+                    case((StreamMetricHistory.status == "broadcasting", StreamMetricHistory.bitrate_mbps), else_=0.0)
+                ).label("total_bitrate"),
+                func.sum(
+                    case((StreamMetricHistory.status == "broadcasting", 1), else_=0)
+                ).label("active_streams"),
+                func.sum(
+                    case((StreamMetricHistory.status != "broadcasting", 1), else_=0)
+                ).label("inactive_streams"),
+                func.sum(
+                    case((StreamMetricHistory.status == "broadcasting", StreamMetricHistory.total_viewers), else_=0)
+                ).label("total_viewers"),
+            )
+            .where(StreamMetricHistory.ts >= cutoff_ms)
+            .group_by(StreamMetricHistory.ts)
+            .order_by(asc(StreamMetricHistory.ts))
+            .limit(300)
+        )
+        res = await session.execute(stmt)
+        rows = res.all()
+
+        timestamps = []
+        total_bitrate = []
+        active_counts = []
+        inactive_counts = []
+        viewer_counts = []
+
+        for r in rows:
+            ts_val, b_sum, act, inact, v_sum = r
+            dt = datetime.fromtimestamp(ts_val / 1000)
+            fmt = "%H:%M:%S" if hours <= 2 else "%d/%m %H:%M"
+            timestamps.append(dt.strftime(fmt))
+            total_bitrate.append(round(float(b_sum or 0.0), 2))
+            active_counts.append(int(act or 0))
+            inactive_counts.append(int(inact or 0))
+            viewer_counts.append(int(v_sum or 0))
+
+        return {
+            "timestamps": timestamps,
+            "total_bitrate_mbps": total_bitrate,
+            "active_streams": active_counts,
+            "inactive_streams": inactive_counts,
+            "total_viewers": viewer_counts,
             "points_count": len(timestamps),
         }
 

@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     # Background Poller and Log Ingestor
     POLL_INTERVAL_SECONDS: int = 5
     LOG_RETENTION_DAYS: int = 30
+    STREAM_METRICS_INTERVAL_SECONDS: int = 5
+    METRIC_RETENTION_DAYS: int = 7
 
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./cctv_monitoring.db"

@@ -204,11 +204,13 @@
                 return;
             }
 
-            const ctxBitrate = document.getElementById('chart-stream-bitrate')?.getContext('2d');
-            if (!ctxBitrate) {
+            const canvasBitrate = document.getElementById('chart-stream-bitrate');
+            if (!canvasBitrate) {
                 setTimeout(() => this.initStreamCharts(), 80);
                 return;
             }
+
+            const chartBaseOpts = {
                 responsive: true,
                 maintainAspectRatio: false,
                 animation: false,
@@ -248,7 +250,7 @@
             };
 
             // 1. Bitrate Chart (Mbps)
-            const ctxBitrate = document.getElementById('chart-stream-bitrate')?.getContext('2d');
+            const ctxBitrate = canvasBitrate.getContext('2d');
             if (ctxBitrate && !this.chartBitrate) {
                 this.chartBitrate = new Chart(ctxBitrate, {
                     type: 'line',
