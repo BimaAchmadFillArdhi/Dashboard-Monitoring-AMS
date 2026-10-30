@@ -158,7 +158,8 @@ async def background_stream_metrics_collector():
 async def lifespan(app: FastAPI):
     # Startup: Initialize database schema
     await init_db()
-    print(f"[{settings.APP_NAME}] Database initialized with SQLite WAL.")
+    db_type = "SQLite" if settings.DATABASE_URL.startswith("sqlite") else "MySQL"
+    print(f"[{settings.APP_NAME}] Database schema initialized successfully on {db_type}.")
 
     # Warm up in-memory dashboard metric buffer from database
     try:

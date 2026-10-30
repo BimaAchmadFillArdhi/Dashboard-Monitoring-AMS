@@ -26,14 +26,15 @@ LOG_LINE_REGEX = re.compile(
 # Stream ID extraction patterns (case-insensitive)
 STREAM_ID_PATTERNS = [
     re.compile(r"(?i)streamId:([A-Za-z0-9_\-\.]+)"),
-    re.compile(r"(?i)stream:([A-Za-z0-9_\-\.]+)"),
+    re.compile(r"(?i)Status of stream ([A-Za-z0-9_\-\.]+)\s+is set to"),
+    re.compile(r"(?i)Stream:([A-Za-z0-9_\-\.]+)"),
     re.compile(r"\(([A-Za-z0-9_\-\.]+)\.m3u8\)"),
     re.compile(r"for ([A-Za-z0-9_\-\.]+)\s+-"),
     re.compile(r"for ([A-Za-z0-9_\-\.]+)\.m3u8"),
 ]
 
 # Known applications for app_name detection
-KNOWN_APPS = ["LiveApp", "WebRTCApp", "atcs", "atcs-kota", "cctv-sekolah", "live"]
+KNOWN_APPS = ["LiveApp", "WebRTCApp", "atcs-kota", "atcs", "cctv-sekolah", "live"]
 
 
 def parse_timestamp_ms(date_str: str, time_str: str) -> int:
@@ -62,11 +63,24 @@ def extract_stream_id(raw_message: str) -> Optional[str]:
     return None
 
 
-def extract_app_name(raw_message: str) -> Optional[str]:
-    """Detect application name if present in message or path."""
+def extract_app_name(raw_message: str, stream_id: Optional[str] = None, stream_map: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """Detect application name from stream metadata first, then from log message content."""
+    # 1. Primary source: exact match from AMS Stream registry
+    if stream_id and stream_map and stream_id in stream_map:
+        return stream_map[stream_id]
+
+    # 2. Match from known application paths in message (/webapps/<app>/ or scope: <app>)
     for app in KNOWN_APPS:
-        if f"/{app}/" in raw_message or f" {app} " in raw_message or f":{app}:" in raw_message:
+        if f"/webapps/{app}/" in raw_message or f"/{app}/" in raw_message or f":{app}:" in raw_message:
             return app
+
+    # 3. Fallback to stream_id prefix/naming conventions if known
+    if stream_id:
+        if stream_id.startswith("TC-"):
+            return "atcs"
+        if stream_id.endswith(".stream"):
+            return "atcs-kota"
+
     return None
 
 
@@ -158,9 +172,15 @@ class LogIngestor:
         db_entries = []
         unmatched_dict: Dict[Tuple[str, str], List[int]] = {}
 
+        # Build fast lookup map from database or AMS for stream ownership
+        from app.db.models import AmsStreamCurrent
+        stmt_map = select(AmsStreamCurrent.stream_id, AmsStreamCurrent.app_name)
+        res_map = await session.execute(stmt_map)
+        stream_map = dict(res_map.all())
+
         for e in entries:
             stream_id = extract_stream_id(e.raw_message)
-            app_name = extract_app_name(e.raw_message)
+            app_name = extract_app_name(e.raw_message, stream_id=stream_id, stream_map=stream_map)
 
             # Translate to friendly Indonesian
             trans = self.translator.translate(e.raw_message, e.level, stream_id)

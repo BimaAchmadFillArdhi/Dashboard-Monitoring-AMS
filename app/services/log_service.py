@@ -8,6 +8,7 @@ from sqlalchemy import select, func, and_, or_, desc, asc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import LogEntry
+from app.translator.engine import get_translator
 
 
 class LogItemDTO(BaseModel):
@@ -106,7 +107,10 @@ class LogService:
         if stream_id and stream_id != "ALL":
             conditions.append(LogEntry.stream_id == stream_id)
         if app_name and app_name != "ALL":
-            conditions.append(LogEntry.app_name == app_name)
+            if app_name.upper() in ("SYSTEM", "SISTEM", "NONE"):
+                conditions.append(LogEntry.app_name.is_(None))
+            else:
+                conditions.append(LogEntry.app_name == app_name)
         if fingerprint:
             conditions.append(LogEntry.fingerprint == fingerprint)
         if search_q:
@@ -168,10 +172,29 @@ class LogService:
             has_more = len(grp_rows) > limit
             items = grp_rows[:limit]
 
+            translator = get_translator()
             entries = []
             for r in items:
                 dt_last = datetime.fromtimestamp(r.max_ts / 1000)
                 dt_first = datetime.fromtimestamp(r.min_ts / 1000)
+                raw_msg = r.sample_raw or ""
+                f_title = r.friendly_title
+                f_msg = r.friendly_message
+                act_hint = r.action_hint
+                sev = r.severity_group
+
+                if (
+                    not f_msg
+                    or f_msg == raw_msg
+                    or "stream CCTV  " in (f_msg or "")
+                    or f_title in ("Pesan teknis belum diterjemahkan", "Pesan Sistem Umum")
+                ):
+                    tr = translator.translate(raw_msg, level=r.level, stream_id=r.stream_id)
+                    f_title = tr.friendly_title
+                    f_msg = tr.friendly_message
+                    sev = tr.severity
+                    act_hint = tr.action_hint or act_hint
+
                 entries.append(
                     LogItemDTO(
                         id=r.max_id,
@@ -180,11 +203,11 @@ class LogService:
                         level=r.level,
                         stream_id=r.stream_id,
                         app_name=r.app_name,
-                        friendly_title=r.friendly_title,
-                        friendly_message=r.friendly_message,
-                        action_hint=r.action_hint,
-                        severity_group=r.severity_group,
-                        raw_message=r.sample_raw or "",
+                        friendly_title=f_title,
+                        friendly_message=f_msg,
+                        action_hint=act_hint,
+                        severity_group=sev,
+                        raw_message=raw_msg,
                         fingerprint=r.fingerprint,
                         repeat_count=r.cnt,
                         first_seen_time=dt_first.strftime("%H:%M:%S"),
@@ -222,6 +245,24 @@ class LogService:
             entries = []
             for log in items:
                 dt = datetime.fromtimestamp(log.ts / 1000)
+                raw_msg = log.raw_message or ""
+                f_title = log.friendly_title
+                f_msg = log.friendly_message
+                act_hint = log.action_hint
+                sev = log.severity_group
+
+                if (
+                    not f_msg
+                    or f_msg == raw_msg
+                    or "stream CCTV  " in (f_msg or "")
+                    or f_title in ("Pesan teknis belum diterjemahkan", "Pesan Sistem Umum")
+                ):
+                    tr = translator.translate(raw_msg, level=log.level, stream_id=log.stream_id)
+                    f_title = tr.friendly_title
+                    f_msg = tr.friendly_message
+                    sev = tr.severity
+                    act_hint = tr.action_hint or act_hint
+
                 entries.append(
                     LogItemDTO(
                         id=log.id,
@@ -231,11 +272,11 @@ class LogService:
                         logger=log.logger,
                         stream_id=log.stream_id,
                         app_name=log.app_name,
-                        friendly_title=log.friendly_title,
-                        friendly_message=log.friendly_message,
-                        action_hint=log.action_hint,
-                        severity_group=log.severity_group,
-                        raw_message=log.raw_message,
+                        friendly_title=f_title,
+                        friendly_message=f_msg,
+                        action_hint=act_hint,
+                        severity_group=sev,
+                        raw_message=raw_msg,
                         fingerprint=log.fingerprint,
                         repeat_count=1,
                     )
@@ -289,7 +330,7 @@ class LogService:
         writer = csv.writer(output)
         writer.writerow([
             "ID", "Waktu (ISO)", "Level", "CCTV / Stream ID", "Aplikasi",
-            "Penjelasan Awam (Bahasa Indonesia)", "Saran Tindakan", "Pesan Mentah (Raw)"
+            "Pesan Log", "Saran Tindakan", "Pesan Mentah (Raw)"
         ])
 
         for l in logs:

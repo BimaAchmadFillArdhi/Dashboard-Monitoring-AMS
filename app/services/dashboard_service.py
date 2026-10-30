@@ -148,20 +148,37 @@ class DashboardService:
         await session.commit()
         return metric.id
 
-    async def get_historical_metrics(self, session: AsyncSession, hours: int = 1) -> RingBufferHistory:
-        """Query persistent historical metrics from database for a specific time range."""
-        cutoff_ms = int((time.time() - (hours * 3600)) * 1000)
-        stmt = (
-            select(ServerMetricHistory)
-            .where(ServerMetricHistory.ts >= cutoff_ms)
-            .order_by(asc(ServerMetricHistory.ts))
-        )
+    async def get_historical_metrics(
+        self,
+        session: AsyncSession,
+        hours: Optional[int] = 1,
+        all_history: bool = False,
+        start_ts: Optional[int] = None,
+        end_ts: Optional[int] = None,
+    ) -> RingBufferHistory:
+        """Query persistent historical metrics from database for specific time filters (1h, 6h, 24h, all, custom range)."""
+        stmt = select(ServerMetricHistory).order_by(asc(ServerMetricHistory.ts))
+        time_span_hours = 1.0
+
+        if all_history:
+            time_span_hours = 9999.0
+        elif start_ts is not None and end_ts is not None:
+            stmt = stmt.where(
+                ServerMetricHistory.ts >= start_ts,
+                ServerMetricHistory.ts <= end_ts,
+            )
+            time_span_hours = max(1.0, (end_ts - start_ts) / 3600000.0)
+        else:
+            h = hours if hours is not None and hours > 0 else 1
+            cutoff_ms = int((time.time() - (h * 3600)) * 1000)
+            stmt = stmt.where(ServerMetricHistory.ts >= cutoff_ms)
+            time_span_hours = float(h)
+
         res = await session.execute(stmt)
         rows = list(res.scalars().all())
 
-        # Fallback to in-memory history if 1 hour selected and no rows in DB yet
         if not rows:
-            if hours <= 1:
+            if not all_history and (hours == 1 or (start_ts is None and hours is not None and hours <= 1)):
                 return self.get_history()
             return RingBufferHistory(
                 timestamps=[],
@@ -173,7 +190,6 @@ class DashboardService:
                 db_query_ms=[],
             )
 
-        # Downsample evenly if there are more than 120 points to ensure smooth rendering and full range coverage
         total_rows = len(rows)
         target_points = 120
         if total_rows > target_points:
@@ -191,7 +207,12 @@ class DashboardService:
         viewers = []
         db_ms = []
 
-        fmt = "%H:%M" if hours <= 6 else "%d/%m %H:%M"
+        if time_span_hours <= 6:
+            fmt = "%H:%M"
+        elif time_span_hours <= 48:
+            fmt = "%d/%m %H:%M"
+        else:
+            fmt = "%d/%m/%y %H:%M"
 
         for r in rows:
             dt = datetime.fromtimestamp(r.ts / 1000)

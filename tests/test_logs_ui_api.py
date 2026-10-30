@@ -171,3 +171,25 @@ def test_api_logs_csv_export(override_db):
     assert "ID,Waktu (ISO),Level" in resp.text
     assert "cam1" in resp.text
     assert "cam2" in resp.text
+
+
+def test_api_logs_filter_by_app_and_system(override_db):
+    client = TestClient(app)
+
+    # Filter by specific app 'atcs'
+    resp_atcs = client.get("/api/logs?app_name=atcs")
+    assert resp_atcs.status_code == 200
+    data_atcs = resp_atcs.json()
+    assert len(data_atcs["entries"]) == 3
+    for e in data_atcs["entries"]:
+        assert e["app_name"] == "atcs"
+
+    # Filter by app that has no entries
+    resp_empty = client.get("/api/logs?app_name=cctv-sekolah")
+    assert resp_empty.status_code == 200
+    assert len(resp_empty.json()["entries"]) == 0
+
+    # Filter by SYSTEM (None app_name)
+    resp_sys = client.get("/api/logs?app_name=SYSTEM")
+    assert resp_sys.status_code == 200
+    assert len(resp_sys.json()["entries"]) == 0

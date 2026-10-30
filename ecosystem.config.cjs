@@ -11,7 +11,7 @@ module.exports = {
         "--host",
         "0.0.0.0",
         "--port",
-        "8000"
+        "8060"
       ],
       interpreter: "none",
       autorestart: true,

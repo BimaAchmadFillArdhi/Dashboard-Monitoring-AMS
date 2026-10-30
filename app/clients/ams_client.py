@@ -323,6 +323,68 @@ class AMSClient:
                 return [BroadcastStream(**item) for item in data]
         return []
 
+    async def get_all_broadcasts(
+        self, app_name: str, batch_size: int = 50, max_pages: int = 100
+    ) -> List[BroadcastStream]:
+        """Fetch ALL broadcasts for an application using pagination loop until exhausted."""
+        total_count = await self.get_broadcasts_count(app_name)
+        all_streams: List[BroadcastStream] = []
+        offset = 0
+        seen_ids = set()
+
+        for _ in range(max_pages):
+            batch = await self.get_broadcasts_list(app_name, offset=offset, size=batch_size)
+            if not batch:
+                break
+
+            new_items_found = False
+            for s in batch:
+                if s.streamId and s.streamId not in seen_ids:
+                    seen_ids.add(s.streamId)
+                    all_streams.append(s)
+                    new_items_found = True
+
+            # If no new items found or returned less than batch_size, stop
+            if not new_items_found or len(batch) < batch_size:
+                break
+
+            offset += len(batch)
+            if total_count > 0 and offset >= total_count:
+                break
+
+        return all_streams
+
+    async def get_all_vods(
+        self, app_name: str, batch_size: int = 50, max_pages: int = 100
+    ) -> List[VoDItem]:
+        """Fetch ALL VoD recordings for an application using pagination loop until exhausted."""
+        total_count = await self.get_vod_count(app_name)
+        all_vods: List[VoDItem] = []
+        offset = 0
+        seen_ids = set()
+
+        for _ in range(max_pages):
+            batch = await self.get_vod_list(app_name, offset=offset, size=batch_size)
+            if not batch:
+                break
+
+            new_items_found = False
+            for v in batch:
+                vid = v.vodId or v.filePath or v.vodName
+                if vid and vid not in seen_ids:
+                    seen_ids.add(vid)
+                    all_vods.append(v)
+                    new_items_found = True
+
+            if not new_items_found or len(batch) < batch_size:
+                break
+
+            offset += len(batch)
+            if total_count > 0 and offset >= total_count:
+                break
+
+        return all_vods
+
     async def get_broadcast(self, app_name: str, stream_id: str) -> Optional[BroadcastStream]:
         resp = await self.proxy_request(f"{app_name}/rest/v2/broadcasts/{stream_id}")
         if resp:

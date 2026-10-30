@@ -15,14 +15,14 @@ class Settings(BaseSettings):
     POLL_INTERVAL_SECONDS: int = 5
     LOG_RETENTION_DAYS: int = 30
     STREAM_METRICS_INTERVAL_SECONDS: int = 5
-    METRIC_RETENTION_DAYS: int = 7
+    METRIC_RETENTION_DAYS: int = 30
 
-    # Database
-    DATABASE_URL: str = "sqlite+aiosqlite:///./cctv_monitoring.db"
-    SYNC_DATABASE_URL: str = "sqlite:///./cctv_monitoring.db"
+    # Database (MySQL Laragon by default)
+    DATABASE_URL: str = "mysql+aiomysql://root:@localhost:3306/ams_monitoring"
+    SYNC_DATABASE_URL: str = "mysql+pymysql://root:@localhost:3306/ams_monitoring"
 
     # App Settings
-    APP_NAME: str = "Wiko AMS"
+    APP_NAME: str = "CCTV Monitoring Dashboard"
     APP_ENV: str = "development"
     DEBUG: bool = True
     SECRET_KEY: str = "cctv-monitoring-super-secret-key-2026"

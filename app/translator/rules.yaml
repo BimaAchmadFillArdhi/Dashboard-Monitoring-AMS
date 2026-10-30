@@ -1,189 +1,366 @@
-# Kamus Aturan Terjemahan Log Ant Media Server (AMS) ke Bahasa Awam
+# Kamus Aturan Terjemahan Log Ant Media Server (AMS) ke Bahasa Indonesia Awam
 # Format:
 # - id: Identifier unik aturan
 #   match: Pola regex atau kata kunci
 #   level: Opsional (ERROR, WARN, INFO, DEBUG)
 #   title: Judul singkat ramah operator
-#   message: Template penjelasan dalam Bahasa Indonesia awam (mendukung placeholder seperti {stream_id})
+#   message: Template penjelasan dalam Bahasa Indonesia awam (mendukung placeholder {stream_id}, {clean_stream_id}, dll)
 #   severity: info | perhatian | masalah
 #   saran_tindakan: Langkah perbaikan yang disarankan untuk operator
 #   kategori: muxing | jaringan | stream | sistem | auth | viewer
 
 rules:
+  # =========================================================================
+  # 1. STREAM CONNECTION & RTSP FETCHING (ERROR & WARNING)
+  # =========================================================================
+  - id: cannot_open_stream_404
+    match: 'cannot open stream:\s*(?P<stream_url>(?:https?|rtsps?|rtmps?)://[^\s]+)\s*with error::\s*(?P<error_raw>Server returned 404 Not Found|404).*?(?:and streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+))?'
+    level: ERROR
+    title: "Alamat Stream Kamera Tidak Ditemukan (404 Not Found)"
+    message: "AMS gagal membuka stream CCTV {clean_stream_id} karena server sumber mengembalikan respons 404 (Not Found). Artinya, alamat stream yang diminta tidak ditemukan atau tidak tersedia pada server sumber. Periksa alamat stream dan pastikan stream tersebut tersedia."
+    severity: masalah
+    saran_tindakan: "Periksa kembali alamat URL stream kamera di menu pengaturan Ant Media Server dan pastikan kamera atau server relay sedang aktif mempublikasikan stream tersebut."
+    kategori: stream
+
+  - id: cannot_open_stream_auth
+    match: 'cannot open stream:\s*(?P<stream_url>(?:https?|rtsps?|rtmps?)://[^\s]+)\s*with error::\s*(?P<error_raw>.*?(?:401|403|Unauthorized|Authentication failed)).*?(?:and streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+))?'
+    level: ERROR
+    title: "Autentikasi Stream Kamera Ditolak (401/403)"
+    message: "AMS gagal membuka stream CCTV {clean_stream_id} karena autentikasi ditolak oleh server sumber (401/403 Unauthorized). Username atau password yang dikonfigurasi tidak sesuai atau telah kedaluwarsa."
+    severity: masalah
+    saran_tindakan: "Perbarui kredensial username dan kata sandi RTSP kamera pada menu pengaturan stream AMS."
+    kategori: auth
+
+  - id: cannot_open_stream_refused
+    match: 'cannot open stream:\s*(?P<stream_url>(?:https?|rtsps?|rtmps?)://[^\s]+)\s*with error::\s*(?P<error_raw>Connection refused).*?(?:and streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+))?'
+    level: ERROR
+    title: "Koneksi Port Kamera Ditolak (Connection Refused)"
+    message: "AMS gagal membuka stream CCTV {clean_stream_id} karena koneksi ditolak (Connection Refused). Server sumber atau perangkat CCTV aktif namun port streaming (RTSP/RTMP) ditutup atau layanan streaming pada kamera tidak aktif."
+    severity: masalah
+    saran_tindakan: "Pastikan kamera hidup dan port RTSP (554) atau RTMP (1935) pada perangkat kamera terbuka dan tidak diblokir firewall."
+    kategori: jaringan
+
+  - id: cannot_open_stream_timeout
+    match: 'cannot open stream:\s*(?P<stream_url>(?:https?|rtsps?|rtmps?)://[^\s]+)\s*with error::\s*(?P<error_raw>Connection timed out|timed out|timeout).*?(?:and streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+))?'
+    level: ERROR
+    title: "Batas Waktu Koneksi Kamera Habis (Timeout)"
+    message: "AMS gagal membuka stream CCTV {clean_stream_id} karena batas waktu koneksi habis (Connection Timeout). Perangkat kamera tidak merespons permintaan streaming dalam batas waktu yang ditentukan jaringan."
+    severity: masalah
+    saran_tindakan: "Periksa stabilitas jalur kabel fiber optic, switch PoE, atau konektivitas IP kamera CCTV."
+    kategori: jaringan
+
+  - id: cannot_open_stream_generic
+    match: 'cannot open stream:\s*(?P<stream_url>(?:https?|rtsps?|rtmps?)://[^\s]+)\s*with error::\s*(?P<error_raw>.*?)(?:and streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+))?$'
+    level: ERROR
+    title: "Gagal Membuka Aliran Stream Kamera"
+    message: "AMS mengalami kendala saat membuka stream CCTV {clean_stream_id} dari server sumber (Penyebab teknis: {error_raw}). Aliran video tidak dapat dijangkau oleh server."
+    severity: masalah
+    saran_tindakan: "Periksa ketersediaan jaringan dan status operasional perangkat CCTV sumber."
+    kategori: stream
+
+  - id: prepare_opening_failed
+    match: 'Prepare for opening the (?P<stream_url>(?:https?|rtsps?|rtmps?)://[^\s]+)\s*has failed for streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+)'
+    level: ERROR
+    title: "Inisialisasi Pembukaan Stream Gagal"
+    message: "Proses persiapan koneksi penarikan stream CCTV {clean_stream_id} gagal dilakukan oleh AMS. Server tidak dapat memulai pembacaan data awal dari sumber video."
+    severity: masalah
+    saran_tindakan: "Server akan mencoba reconnect secara otomatis. Periksa pesan log terkait untuk detail error koneksi pada kamera."
+    kategori: stream
+
+  - id: stream_fetcher_retry
+    match: 'Stream fetcher will try to fetch source (?P<stream_url>(?:https?|rtsps?|rtmps?)://[^\s]+)\s*after (?P<retry_ms>\d+) ms for streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+)'
+    level: INFO
+    title: "Penjadwalan Sambung Ulang Kamera"
+    message: "AMS menjadwalkan upaya penarikan ulang stream CCTV {clean_stream_id} dalam {retry_ms} ms setelah sambungan sebelumnya terputus atau gagal."
+    severity: perhatian
+    saran_tindakan: "Tunggu proses reconnect otomatis oleh sistem. Jika berulang terus-menerus, periksa kondisi fisik kamera CCTV."
+    kategori: stream
+
+  - id: stream_fetcher_preparing
+    match: 'Preparing the StreamFetcher for (?P<stream_url>(?:https?|rtsps?|rtmps?)://[^\s]+)\s*for streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+)'
+    level: INFO
+    title: "Menyiapkan Pengambilan Stream Kamera"
+    message: "AMS sedang menginisialisasi modul penarik stream (StreamFetcher) untuk menghubungkan kamera CCTV {clean_stream_id}."
+    severity: info
+    saran_tindakan: "Proses inisialisasi normal, tidak memerlukan tindakan."
+    kategori: stream
+
+  - id: stream_status_set_with_result
+    match: 'Status of stream (?P<stream_id>[A-Za-z0-9_\-\.]+) is set to (?P<status_name>[A-Za-z0-9_]+) with result: (?P<result>true|false)'
+    level: INFO
+    title: "Pembaruan Status Stream Kamera"
+    message: "Status operasional stream kamera {clean_stream_id} telah diperbarui menjadi '{status_name}' (Hasil operasi: {result})."
+    severity: info
+    saran_tindakan: "Kondisi operasional normal."
+    kategori: stream
+
+  - id: stream_status_set_simple
+    match: 'Status of stream (?P<stream_id>[A-Za-z0-9_\-\.]+) is set to (?P<status_name>[A-Za-z0-9_]+)'
+    level: INFO
+    title: "Pembaruan Status Stream Kamera"
+    message: "Status operasional stream kamera {clean_stream_id} dialihkan ke status '{status_name}'."
+    severity: info
+    saran_tindakan: "Tidak ada tindakan yang diperlukan."
+    kategori: stream
+
+  - id: stream_setting_transport
+    match: 'Setting rtsp transport type to (?P<transport_mode>\d+) for stream source: (?P<stream_url>.*?) and timeout:(?P<timeout_us>\d+)us'
+    level: INFO
+    title: "Konfigurasi Mode Transport RTSP"
+    message: "AMS menerapkan mode transport RTSP (Mode: {transport_mode}) dengan batas waktu {timeout_us} µs untuk stream {clean_stream_id}."
+    severity: info
+    saran_tindakan: "Konfigurasi diterapkan secara otomatis oleh sistem."
+    kategori: stream
+
+  - id: stream_service_not_found
+    match: 'Stream service was not found for scope: (?P<scope>.*)'
+    level: WARN
+    title: "Layanan Stream Tidak Ditemukan pada Scope"
+    message: "Permintaan penayangan stream masuk ke scope aplikasi yang tidak terdaftar atau belum siap ({scope})."
+    severity: perhatian
+    saran_tindakan: "Pastikan nama aplikasi Ant Media Server yang diakses penonton sudah sesuai dan berstatus aktif."
+    kategori: sistem
+
+  - id: closing_due_to_long_handshake
+    match: 'Closing (?P<conn_id>[A-Za-z0-9]+), due to long handshake\. State: (?P<state>.*)'
+    level: WARN
+    title: "Koneksi Klien Ditutup (Handshake Lambat)"
+    message: "AMS menutup koneksi jaringan {conn_id} karena proses jabat tangan (handshake) terlalu lambat dan melebihi batas waktu toleransi."
+    severity: perhatian
+    saran_tindakan: "Umumnya dipicu oleh koneksi internet klien penonton yang lambat atau terputus mendadak."
+    kategori: jaringan
+
+  - id: connection_closed
+    match: '(?i)(?:connectionClosed:\s*|Connection is closed:\s*)(?P<conn_id>[A-Za-z0-9]+)'
+    level: INFO
+    title: "Koneksi Jaringan Selesai Ditutup"
+    message: "Sesi koneksi jaringan ({conn_id}) telah selesai atau ditutup secara normal oleh klien atau server."
+    severity: info
+    saran_tindakan: "Aktivitas penutupan koneksi normal."
+    kategori: jaringan
+
+  - id: connection_not_found
+    match: 'Connection was not found for (?P<conn_id>[A-Za-z0-9]+)'
+    level: WARN
+    title: "Sesi Koneksi Tidak Ditemukan"
+    message: "Server mendeteksi upaya pemutusan koneksi untuk ID sesi {conn_id} yang sudah tidak aktif atau sudah dibersihkan dari memori."
+    severity: info
+    saran_tindakan: "Informasi pembersihan sesi rutin."
+    kategori: jaringan
+
+  - id: adding_timebase
+    match: 'Adding timebase to the input time base map index:(?P<idx>\d+) value:\s*(?P<val>[-\d\/\.]+) for stream:(?P<stream_id>[A-Za-z0-9_\-\.]+) type:(?P<track_type>[A-Za-z0-9_]+)'
+    level: INFO
+    title: "Inisialisasi Sinkronisasi Waktu Media (Timebase)"
+    message: "AMS berhasil membaca patokan waktu dasar (timebase {val}) untuk trek {track_type} pada kamera {clean_stream_id}."
+    severity: info
+    saran_tindakan: "Trek audio/video kamera berhasil dideteksi dengan baik."
+    kategori: stream
+
+  - id: server_settings_exist
+    match: 'serverSettings exist (?P<info>.*)'
+    level: INFO
+    title: "Pemeriksaan Pengaturan Server AMS"
+    message: "Sistem memuat konfigurasi pengaturan server Ant Media Server secara normal."
+    severity: info
+    saran_tindakan: "Tidak ada tindakan yang diperlukan."
+    kategori: sistem
+
+  - id: vertx_exist
+    match: 'vertx exist (?P<info>.*)'
+    level: INFO
+    title: "Pemeriksaan Engine Asinkron Vert.x"
+    message: "Engine asynchronous Vert.x internal AMS aktif dan beroperasi lancar."
+    severity: info
+    saran_tindakan: "Tidak ada tindakan yang diperlukan."
+    kategori: sistem
+
+  - id: encoder_adaptor_check
+    match: 'io\.antmedia\.enterprise\.adaptive\.EncoderAdaptor'
+    level: ERROR
+    title: "Pengecekan Modul Transcoding Adaptif"
+    message: "Modul encoder adaptif mencatat pengecekan rutin pada siklus transcoding stream video."
+    severity: info
+    saran_tindakan: "Pengecekan modul internal server."
+    kategori: sistem
+
+  # =========================================================================
+  # 2. HLS MUXING & VIDEO TIMESTAMPS
+  # =========================================================================
   - id: cannot_write_video_frame_numerical_range
     match: 'cannot write video frame to muxer\((?P<stream_id>[A-Za-z0-9_\-\.]+)\.m3u8\).*Numerical result out of range'
     level: WARN
-    title: Gangguan Muxer Video HLS (Timestamp Kacau)
-    message: Video dari kamera {stream_id} tidak bisa disimpan ke pemutar HLS karena urutan waktu frame kacau. Tayangan kamera kemungkinan tersendat, patah-patah, atau putus-putus.
+    title: "Gangguan Muxer Video HLS (Timestamp Kacau)"
+    message: "Video dari kamera {stream_id} tidak bisa disimpan ke pemutar HLS karena urutan waktu frame kacau. Tayangan kamera kemungkinan tersendat, patah-patah, atau putus-putus."
     severity: masalah
-    saran_tindakan: Periksa kestabilan koneksi jaringan dari kamera CCTV, restart stream kamera, atau teruskan ke teknisi jaringan jika terus berulang.
+    saran_tindakan: "Periksa kestabilan koneksi jaringan dari kamera CCTV, restart stream kamera, atau teruskan ke teknisi jaringan jika terus berulang."
     kategori: muxing
 
   - id: cannot_write_video_frame_no_such_file
     match: 'cannot write video frame to muxer\((?P<stream_id>[A-Za-z0-9_\-\.]+)\.m3u8\).*No such file or directory'
     level: WARN
-    title: Berkas Segmen HLS Tidak Ditemukan
-    message: Server gagal menulis berkas segmen tayangan untuk kamera {stream_id} karena direktori penyimpanan sementara tidak tersedia atau baru saja dibersihkan.
+    title: "Berkas Segmen HLS Tidak Ditemukan"
+    message: "Server gagal menulis berkas segmen tayangan untuk kamera {stream_id} karena direktori penyimpanan sementara tidak tersedia atau baru saja dibersihkan."
     severity: perhatian
-    saran_tindakan: Pastikan kapasitas disk server masih mencukupi dan hak akses folder rekaman/HLS sudah benar.
+    saran_tindakan: "Pastikan kapasitas disk server masih mencukupi dan hak akses folder rekaman/HLS sudah benar."
     kategori: muxing
 
   - id: cannot_write_video_frame_generic
     match: 'cannot write video frame to muxer\((?P<stream_id>[A-Za-z0-9_\-\.]+)\.m3u8\).*Error is (?P<error_msg>.*)'
     level: WARN
-    title: Kegagalan Menulis Frame Video
-    message: Server mengalami kegagalan saat memproses frame video kamera {stream_id} ke pemutar web ({error_msg}).
+    title: "Kegagalan Menulis Frame Video"
+    message: "Server mengalami kegagalan saat memproses frame video kamera {stream_id} ke pemutar web ({error_msg})."
     severity: perhatian
-    saran_tindakan: Amati apakah kamera masih aktif. Bila berulang, lakukan reload stream pada panel aplikasi.
+    saran_tindakan: "Amati apakah kamera masih aktif. Bila berulang, lakukan reload stream pada panel aplikasi."
     kategori: muxing
 
   - id: last_dts_bigger
     match: 'Last dts:(?P<last_dts>\d+) is bigger than incoming dts:\s*(?P<incoming_dts>\d+).*streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+)'
     level: INFO
-    title: Urutan Waktu Paket Video Tidak Beraturan
-    message: Kamera {stream_id} mengirim data dengan urutan waktu tidak teratur (indikasi paket data terlambat akibat jaringan tidak stabil atau jitter kamera tinggi).
+    title: "Urutan Waktu Paket Video Tidak Beraturan"
+    message: "Kamera {stream_id} mengirim data dengan urutan waktu tidak teratur (indikasi paket data terlambat akibat jaringan tidak stabil atau jitter kamera tinggi)."
     severity: perhatian
-    saran_tindakan: Periksa latensi jaringan CCTV. Jika sering terjadi, sesuaikan nilai "streamFetcherBufferTime" di pengaturan aplikasi menjadi 1000ms.
+    saran_tindakan: "Periksa latensi jaringan CCTV. Jika sering terjadi, sesuaikan nilai \"streamFetcherBufferTime\" di pengaturan aplikasi menjadi 1000ms."
     kategori: jaringan
 
   - id: audio_video_sync_gap
     match: 'Audio/Video sync is more than (?P<drift_ms>\d+)ms for stream:(?P<stream_id>[A-Za-z0-9_\-\.]+)'
     level: WARN
-    title: Sinkronisasi Suara dan Gambar Terlambat
-    message: Selisih waktu antara audio dan video pada kamera {stream_id} mencapai {drift_ms} ms. Server berusaha menyinkronkan kembali.
+    title: "Sinkronisasi Suara dan Gambar Terlambat"
+    message: "Selisih waktu antara audio dan video pada kamera {stream_id} mencapai {drift_ms} ms. Server berusaha menyinkronkan kembali."
     severity: perhatian
-    saran_tindakan: Umumnya server pulih secara otomatis. Jika video dan audio terus meleset jauh, periksa encoder hardware kamera.
+    saran_tindakan: "Umumnya server pulih secara otomatis. Jika video dan audio terus meleset jauh, periksa encoder hardware kamera."
     kategori: stream
 
   - id: stream_queue_size_speed
     match: 'Stream queue size:(?P<queue_size>\d+) speed:(?P<speed>[-\d\.]+) for streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+)'
     level: INFO
-    title: Status Kecepatan Ingest Stream
-    message: Aliran data kamera {stream_id} berjalan pada kecepatan ingest {speed}x dengan antrean frame {queue_size}.
+    title: "Status Kecepatan Ingest Stream"
+    message: "Aliran data kamera {stream_id} berjalan pada kecepatan ingest {speed}x dengan antrean frame {queue_size}."
     severity: info
-    saran_tindakan: Bila nilai speed bertanda minus tajam atau antrean menumpuk tinggi, aliran video berpotensi terhenti.
+    saran_tindakan: "Bila nilai speed bertanda minus tajam atau antrean menumpuk tinggi, aliran video berpotensi terhenti."
     kategori: stream
 
   - id: not_writing_packet
     match: 'Not writing packet\d* for (?P<stream_id>[A-Za-z0-9_\-\.]+)'
     level: WARN
-    title: Paket Data Kamera Dilewati
-    message: Server sengaja melewatkan satu paket data dari kamera {stream_id} karena trek video belum siap atau baru direstart.
+    title: "Paket Data Kamera Dilewati"
+    message: "Server sengaja melewatkan satu paket data dari kamera {stream_id} karena trek video belum siap atau baru direstart."
     severity: info
-    saran_tindakan: Ini wajar saat stream pertama kali tersambung atau beralih resolusi.
+    saran_tindakan: "Ini wajar saat stream pertama kali tersambung atau beralih resolusi."
     kategori: stream
 
   - id: stream_alive_check
     match: 'Stream:(?P<stream_id>[A-Za-z0-9_\-\.]+) is alive -> (?P<is_alive>true|false), is it blocked -> (?P<is_blocked>true|false)'
     level: INFO
-    title: Pemeriksaan Keaktifan Kamera
-    message: Pemeriksaan rutin mendeteksi kamera {stream_id} dalam kondisi hidup={is_alive} dan diblokir={is_blocked}.
+    title: "Pemeriksaan Keaktifan Kamera"
+    message: "Pemeriksaan rutin mendeteksi kamera {stream_id} dalam kondisi hidup={is_alive} dan diblokir={is_blocked}."
     severity: info
-    saran_tindakan: Bila hidup bernilai false berulang kali, periksa suplai daya dan status fisik kamera.
+    saran_tindakan: "Bila hidup bernilai false berulang kali, periksa suplai daya dan status fisik kamera."
     kategori: stream
 
   - id: stream_auto_stop_decision
     match: 'Stream:(?P<stream_id>[A-Za-z0-9_\-\.]+) isToBeStoppedAutomatically decision is (?P<decision>true|false)'
     level: INFO
-    title: Keputusan Otomatisasi Stream
-    message: Server memutuskan status auto-stop untuk kamera {stream_id} bernilai {decision}.
+    title: "Keputusan Otomatisasi Stream"
+    message: "Server memutuskan status auto-stop untuk kamera {stream_id} bernilai {decision}."
     severity: info
-    saran_tindakan: Tidak ada tindakan yang diperlukan.
+    saran_tindakan: "Tidak ada tindakan yang diperlukan."
     kategori: stream
 
   - id: rtsp_connection_refused
     match: '(?i)(?:Connection refused|Failed to connect to RTSP|Could not open input).*?(?P<stream_id>[A-Za-z0-9_\-\.]+)?'
     level: ERROR
-    title: Koneksi RTSP Kamera Gagal
-    message: Server tidak dapat terhubung ke alamat RTSP kamera {stream_id}. Kemungkinan kamera mati, kabel jaringan terputus, atau alamat IP kamera berubah.
+    title: "Koneksi RTSP Kamera Gagal"
+    message: "Server tidak dapat terhubung ke alamat RTSP kamera {stream_id}. Kemungkinan kamera mati, kabel jaringan terputus, atau alamat IP kamera berubah."
     severity: masalah
-    saran_tindakan: Cek daya kamera di lokasi fisik, pastikan port RTSP (554) terbuka dan dapat di-ping dari server.
+    saran_tindakan: "Cek daya kamera di lokasi fisik, pastikan port RTSP (554) terbuka dan dapat di-ping dari server."
     kategori: jaringan
 
   - id: rtsp_timeout
     match: '(?i)(?:Connection timed out|read timeout|RTSP timeout).*?(?P<stream_id>[A-Za-z0-9_\-\.]+)?'
     level: ERROR
-    title: Waktu Sambungan Kamera Habis (Timeout)
-    message: Kamera {stream_id} tidak merespons permintaan video dalam batas waktu toleransi jaringan.
+    title: "Waktu Sambungan Kamera Habis (Timeout)"
+    message: "Kamera {stream_id} tidak merespons permintaan video dalam batas waktu toleransi jaringan."
     severity: masalah
-    saran_tindakan: Periksa jalur fiber optic/radio wireless yang menghubungkan kamera ke jaringan utama.
+    saran_tindakan: "Periksa jalur fiber optic/radio wireless yang menghubungkan kamera ke jaringan utama."
     kategori: jaringan
 
   - id: rtsp_auth_failed
     match: '(?i)(?:401 Unauthorized|Invalid credentials|RTSP authentication failed).*?(?P<stream_id>[A-Za-z0-9_\-\.]+)?'
     level: ERROR
-    title: Kredensial Kamera Tidak Valid
-    message: Username atau kata sandi untuk mengakses stream kamera {stream_id} ditolak oleh kamera.
+    title: "Kredensial Kamera Tidak Valid"
+    message: "Username atau kata sandi untuk mengakses stream kamera {stream_id} ditolak oleh kamera."
     severity: masalah
-    saran_tindakan: Perbarui username dan password kamera yang sesuai di konfigurasi stream Ant Media Server.
+    saran_tindakan: "Perbarui username dan password kamera yang sesuai di konfigurasi stream Ant Media Server."
     kategori: auth
 
   - id: stream_started
     match: '(?i)(?:Publishing started|startPublish|Stream started).*?streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+)'
     level: INFO
-    title: Stream Kamera Mulai Tayang
-    message: Kamera {stream_id} berhasil tersambung dan mulai mengirimkan video live ke server.
+    title: "Stream Kamera Mulai Tayang"
+    message: "Kamera {stream_id} berhasil tersambung dan mulai mengirimkan video live ke server."
     severity: info
-    saran_tindakan: Kamera beroperasi normal.
+    saran_tindakan: "Kamera beroperasi normal."
     kategori: stream
 
   - id: stream_finished
     match: '(?i)(?:Publishing stopped|stopPublish|Stream finished).*?streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+)'
     level: INFO
-    title: Stream Kamera Berhenti
-    message: Aliran video kamera {stream_id} telah berhenti atau koneksi diputus oleh sumber.
+    title: "Stream Kamera Berhenti"
+    message: "Aliran video kamera {stream_id} telah berhenti atau koneksi diputus oleh sumber."
     severity: perhatian
-    saran_tindakan: Amati apakah kamera akan terhubung kembali otomatis dalam beberapa detik.
+    saran_tindakan: "Amati apakah kamera akan terhubung kembali otomatis dalam beberapa detik."
     kategori: stream
 
   - id: viewer_registered
     match: '(?i)(?:registerSubscriber|New subscriber|WebRTC viewer added).*?streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+)'
     level: INFO
-    title: Penonton Baru Bergabung
-    message: Seorang penonton mulai menyaksikan tayangan live dari kamera {stream_id}.
+    title: "Penonton Baru Bergabung"
+    message: "Seorang penonton mulai menyaksikan tayangan live dari kamera {stream_id}."
     severity: info
-    saran_tindakan: Tidak ada tindakan yang diperlukan.
+    saran_tindakan: "Tidak ada tindakan yang diperlukan."
     kategori: viewer
 
   - id: viewer_unregistered
     match: '(?i)(?:unregisterSubscriber|Subscriber left|WebRTC viewer removed).*?streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+)'
     level: INFO
-    title: Penonton Menutup Tayangan
-    message: Penonton telah selesai menyaksikan tayangan kamera {stream_id}.
+    title: "Penonton Menutup Tayangan"
+    message: "Penonton telah selesai menyaksikan tayangan kamera {stream_id}."
     severity: info
-    saran_tindakan: Tidak ada tindakan yang diperlukan.
+    saran_tindakan: "Tidak ada tindakan yang diperlukan."
     kategori: viewer
 
   - id: disk_space_warning
     match: '(?i)(?:Disk space is low|No space left on device|Usable disk space.*low)'
-    title: Peringatan Kapasitas Penyimpanan Server
-    message: Ruang penyimpanan disk server tersisa sedikit. Berkas rekaman dan log lama berpotensi gagal ditulis.
+    title: "Peringatan Kapasitas Penyimpanan Server"
+    message: "Ruang penyimpanan disk server tersisa sedikit. Berkas rekaman dan log lama berpotensi gagal ditulis."
     severity: masalah
-    saran_tindakan: Bersihkan rekaman lama atau jalankan skrip retensi log untuk mengosongkan ruang disk server.
+    saran_tindakan: "Bersihkan rekaman lama atau jalankan skrip retensi log untuk mengosongkan ruang disk server."
     kategori: sistem
 
   - id: jvm_memory_warning
     match: '(?i)(?:Out of memory|Java heap space|GC overhead limit exceeded)'
-    title: Beban Memori Server Kritis
-    message: Memori JVM server hampir penuh. Ant Media Server berisiko mengalami penurunan performa atau freeze sementara.
+    title: "Beban Memori Server Kritis"
+    message: "Memori JVM server hampir penuh. Ant Media Server berisiko mengalami penurunan performa atau freeze sementara."
     severity: masalah
-    saran_tindakan: Lakukan restart berkala pada service Ant Media Server atau tingkatkan alokasi RAM JVM.
+    saran_tindakan: "Lakukan restart berkala pada service Ant Media Server atau tingkatkan alokasi RAM JVM."
     kategori: sistem
 
   - id: stream_reconnecting
     match: '(?i)(?:Reconnecting to stream source|Trying to reconnect|StreamFetcher reconnect).*?streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+)'
     level: WARN
-    title: Server Mencoba Menyambung Ulang Kamera
-    message: Koneksi ke kamera {stream_id} sempat terputus, server saat ini mencoba menyambung kembali secara otomatis.
+    title: "Server Mencoba Menyambung Ulang Kamera"
+    message: "Koneksi ke kamera {stream_id} sempat terputus, server saat ini mencoba menyambung kembali secara otomatis."
     severity: perhatian
-    saran_tindakan: Tunggu hingga 30 detik. Jika tidak berhasil tersambung, periksa perangkat switch atau adaptor PoE kamera.
+    saran_tindakan: "Tunggu hingga 30 detik. Jika tidak berhasil tersambung, periksa perangkat switch atau adaptor PoE kamera."
     kategori: jaringan
 
   - id: encoder_queue_dropped
     match: '(?i)(?:Encoder queue is full|Dropping frame|Packet queue is full).*?streamId:(?P<stream_id>[A-Za-z0-9_\-\.]+)'
     level: WARN
-    title: Frame Video Dibuang Karena Antrean Penuh
-    message: Server membuang beberapa frame video dari kamera {stream_id} karena beban pemrosesan atau keterlambatan penyimpanan.
+    title: "Frame Video Dibuang Karena Antrean Penuh"
+    message: "Server membuang beberapa frame video dari kamera {stream_id} karena beban pemrosesan atau keterlambatan penyimpanan."
     severity: perhatian
-    saran_tindakan: Periksa beban CPU server atau turunkan bitrate stream pada kamera jika resolusi terlalu tinggi.
+    saran_tindakan: "Periksa beban CPU server atau turunkan bitrate stream pada kamera jika resolusi terlalu tinggi."
     kategori: muxing

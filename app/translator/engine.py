@@ -9,6 +9,22 @@ from pydantic import BaseModel
 logger = logging.getLogger("ams.translator")
 
 
+def make_friendly_stream_name(stream_id: Optional[str]) -> str:
+    """Format a stream ID into a clean, human-readable camera name."""
+    if not stream_id or stream_id.lower() in ("kamera", "system", "sistem"):
+        return "kamera"
+    name = stream_id.strip()
+    for suffix in [".stream", ".m3u8", ".mp4", ".flv", ".ts"]:
+        if name.lower().endswith(suffix):
+            name = name[:-len(suffix)]
+    for prefix in ["ATCS_", "atcs_", "cctv_", "CCTV_", "TC-", "tc-"]:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+    name = name.replace("_", " ").replace("-", " ").strip()
+    # Return formatted title
+    return name.title() if name else stream_id
+
+
 class TranslationResult(BaseModel):
     rule_id: Optional[str] = None
     friendly_title: str
@@ -37,7 +53,7 @@ class Rule:
             self.regex = None
 
     def match(self, raw_message: str, level: str, stream_id: Optional[str] = None) -> Optional[TranslationResult]:
-        # Filter by level if specified
+        # Filter by level if specified in rule
         if self.level and level and self.level.upper() != level.upper():
             return None
 
@@ -53,13 +69,25 @@ class Rule:
         if "stream_id" not in subs or not subs["stream_id"]:
             subs["stream_id"] = stream_id or "Kamera"
 
+        sid = subs.get("stream_id", "")
+        clean_sid = make_friendly_stream_name(sid)
+
+        # If stream_id was generic but stream_url was captured, extract name from URL
+        if clean_sid.lower() == "kamera" and "stream_url" in subs and subs["stream_url"]:
+            url_part = subs["stream_url"].split("?")[0].split("&")[0].split("/")[-1]
+            if url_part:
+                clean_sid = make_friendly_stream_name(url_part)
+                if subs["stream_id"] == "Kamera":
+                    subs["stream_id"] = url_part
+
+        subs["clean_stream_id"] = clean_sid
+
         # Safely render friendly message
         try:
-            # Replace missing keys gracefully with empty string
             rendered_msg = self.message_template
             for k, v in subs.items():
                 rendered_msg = rendered_msg.replace(f"{{{k}}}", str(v) if v is not None else "")
-            # Clean any remaining unbound placeholders like {error}
+            # Clean any remaining unbound placeholders like {placeholder}
             rendered_msg = re.sub(r'\{[A-Za-z0-9_]+\}', '', rendered_msg).strip()
         except Exception:
             rendered_msg = self.message_template
@@ -118,7 +146,7 @@ class TranslatorEngine:
     def translate(
         self, raw_message: str, level: str = "INFO", stream_id: Optional[str] = None
     ) -> TranslationResult:
-        """Translate a raw technical log message into human-friendly Indonesian text."""
+        """Translate a raw technical log message into human-friendly Indonesian text with cause explanation."""
         self.check_and_reload_if_modified()
 
         for rule in self.rules:
@@ -126,14 +154,52 @@ class TranslatorEngine:
             if result:
                 return result
 
-        # Fallback for unrecognized messages
+        # Fallback for unrecognized messages: provide general explanation without fabricating unknown causes
+        clean_name = make_friendly_stream_name(stream_id) if stream_id else "sistem"
+        lvl = (level or "INFO").upper()
+
+        if lvl == "ERROR":
+            fallback_title = "Peringatan Kesalahan Operasional"
+            fallback_msg = (
+                f"Terjadi kesalahan internal pada Ant Media Server saat memproses operasi {clean_name}. "
+                "Inti masalah teknis belum memiliki aturan terjemahan spesifik. "
+                "Silakan periksa bagian 'Pesan Log Asli (Teknis)' di bawah untuk informasi error lengkap."
+            )
+            fallback_hint = "Periksa kestabilan server sumber dan pastikan konfigurasi stream sudah benar."
+            severity = "masalah"
+        elif lvl in ("WARN", "WARNING"):
+            fallback_title = "Peringatan Kondisi Operasional"
+            fallback_msg = (
+                f"Terdapat peringatan kondisi operasional pada {clean_name}. "
+                "Sistem mendeteksi anomali namun proses streaming tetap berjalan. "
+                "Lihat 'Pesan Log Asli (Teknis)' di bawah untuk rincian."
+            )
+            fallback_hint = "Amati apakah peringatan ini berulang secara terus-menerus."
+            severity = "perhatian"
+        elif lvl == "DEBUG":
+            fallback_title = "Informasi Penelusuran Diagnostik (Debug)"
+            fallback_msg = (
+                f"Pencatatan aktivitas diagnostik dan penelusuran internal AMS untuk {clean_name}. "
+                "Pesan ini ditujukan untuk kebutuhan analisa teknis mendalam."
+            )
+            fallback_hint = "Tidak memerlukan tindakan operasional."
+            severity = "info"
+        else:
+            fallback_title = "Informasi Aktivitas Sistem"
+            fallback_msg = (
+                f"Pemberitahuan aktivitas operasional rutin Ant Media Server terkait {clean_name}. "
+                "Layanan berjalan normal. Rincian teknis tersedia pada 'Pesan Log Asli'."
+            )
+            fallback_hint = "Tidak ada tindakan yang diperlukan."
+            severity = "info"
+
         return TranslationResult(
             rule_id=None,
-            friendly_title="Pesan teknis belum diterjemahkan",
-            friendly_message=raw_message,
-            severity="tidak_dikenal",
-            action_hint="Belum ada rekomendasi tindakan khusus untuk pesan ini.",
-            category="lainnya",
+            friendly_title=fallback_title,
+            friendly_message=fallback_msg,
+            severity=severity,
+            action_hint=fallback_hint,
+            category="sistem",
             matched=False,
         )
 

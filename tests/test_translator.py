@@ -7,6 +7,23 @@ def translator():
     return TranslatorEngine()
 
 
+def test_translate_stream_404_not_found(translator):
+    """Test translating 404 stream not found error with human-friendly explanation and stream name."""
+    raw = (
+        "cannot open stream: rtsp://cctvjss.jogjakota.go.id:1935/atcs/ATCS_wirobrajan.stream&rtsp_transport=tcp "
+        "with error:: Server returned 404 Not Found"
+    )
+    res = translator.translate(raw, level="ERROR")
+    assert res.matched is True
+    assert res.rule_id == "cannot_open_stream_404"
+    assert res.severity == "masalah"
+    assert "Wirobrajan" in res.friendly_message
+    assert "404 (Not Found)" in res.friendly_message
+    assert "tidak ditemukan atau tidak tersedia" in res.friendly_message
+    assert "Periksa alamat stream" in res.friendly_message
+    assert res.action_hint is not None
+
+
 def test_translate_numerical_out_of_range(translator):
     raw = (
         "cannot write video frame to muxer(TC-DemenGlagah-VSS.m3u8). "
@@ -65,11 +82,29 @@ def test_translate_stream_lifecycle(translator):
     assert res_stop.severity == "perhatian"
 
 
+def test_translate_fetcher_and_connection_events(translator):
+    fetch_raw = "Stream fetcher will try to fetch source rtsp://10.0.0.1/live after 3000 ms for streamId:cam1"
+    res_fetch = translator.translate(fetch_raw, level="INFO")
+    assert res_fetch.rule_id == "stream_fetcher_retry"
+    assert "3000" in res_fetch.friendly_message
+
+    close_raw = "connectionClosed: SESS12345"
+    res_close = translator.translate(close_raw, level="INFO")
+    assert res_close.rule_id == "connection_closed"
+    assert "SESS12345" in res_close.friendly_message
+
+
 def test_translate_unmatched_fallback(translator):
+    """Ensure unmatched logs provide general explanation without fabricating causes."""
     raw_unknown = "Some completely unknown custom internal message 0xDEADBEEF"
     res = translator.translate(raw_unknown, level="INFO")
     assert res.matched is False
     assert res.rule_id is None
-    assert res.friendly_title == "Pesan teknis belum diterjemahkan"
-    assert res.friendly_message == raw_unknown
-    assert res.severity == "tidak_dikenal"
+    assert "Aktivitas" in res.friendly_title or "Sistem" in res.friendly_title
+    assert "operasional rutin" in res.friendly_message
+    assert res.severity == "info"
+
+    res_err = translator.translate(raw_unknown, level="ERROR")
+    assert res_err.matched is False
+    assert "Peringatan Kesalahan" in res_err.friendly_title
+    assert "Pesan Log Asli" in res_err.friendly_message

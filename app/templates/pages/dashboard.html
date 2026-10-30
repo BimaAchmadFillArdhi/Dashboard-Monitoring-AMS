@@ -147,9 +147,20 @@ function getDashChartOptions(isDark) {
         applications: [],
         
         // History Range & State
-        historyHours: 1,
+        historyMode: 1,
+        customStartDate: '',
+        customEndDate: '',
+        showCustomDateInputs: false,
         isLoadingHistory: false,
         isHistoryEmpty: false,
+        
+        // Audit & Sync State
+        auditTab: 'sync',
+        syncLogs: [],
+        statusHistory: [],
+        isLoadingAudit: false,
+        isSyncing: false,
+        syncFeedback: '',
         
         // Heartbeat & Stale tracking
         secondsSinceUpdate: 0,
@@ -157,9 +168,16 @@ function getDashChartOptions(isDark) {
         sseSource: null,
         
         init() {
+            // Set default date range to today
+            const today = new Date().toISOString().split('T')[0];
+            this.customStartDate = today;
+            this.customEndDate = today;
+
             this.fetchMetrics();
             this.initCharts();
-            this.fetchHistory(this.historyHours);
+            this.fetchHistory(1);
+            this.fetchSyncLogs();
+            this.fetchStatusHistory();
             this.connectSSE();
             
             // Polling interval
@@ -176,7 +194,7 @@ function getDashChartOptions(isDark) {
             // Re-render charts on theme toggle if needed
             window.addEventListener('theme-changed', () => {
                 this.initCharts();
-                this.fetchHistory(this.historyHours);
+                this.fetchHistory(this.historyMode);
             });
         },
         
@@ -195,11 +213,25 @@ function getDashChartOptions(isDark) {
             }
         },
 
-        async fetchHistory(hours = 1) {
-            this.historyHours = hours;
+        async fetchHistory(mode = 1) {
+            this.historyMode = mode;
             this.isLoadingHistory = true;
+            
+            let url = '/api/dashboard/history';
+            if (mode === 'all') {
+                url += '?all_history=true';
+            } else if (mode === 'custom') {
+                if (!this.customStartDate || !this.customEndDate) {
+                    this.isLoadingHistory = false;
+                    return;
+                }
+                url += `?start_date=${encodeURIComponent(this.customStartDate)}&end_date=${encodeURIComponent(this.customEndDate)}`;
+            } else {
+                url += `?hours=${mode}`;
+            }
+
             try {
-                const res = await fetch(`/api/dashboard/history?hours=${hours}`);
+                const res = await fetch(url);
                 if (res.ok) {
                     const data = await res.json();
                     if (!data.timestamps || data.timestamps.length === 0) {
@@ -216,6 +248,51 @@ function getDashChartOptions(isDark) {
                 this.isHistoryEmpty = true;
             } finally {
                 this.isLoadingHistory = false;
+            }
+        },
+
+        async fetchSyncLogs() {
+            try {
+                const res = await fetch('/api/dashboard/sync-logs?limit=15');
+                if (res.ok) {
+                    this.syncLogs = await res.json();
+                }
+            } catch (e) {
+                console.error('Gagal memuat log sinkronisasi:', e);
+            }
+        },
+
+        async fetchStatusHistory() {
+            try {
+                const res = await fetch('/api/dashboard/stream-status-history?limit=15');
+                if (res.ok) {
+                    this.statusHistory = await res.json();
+                }
+            } catch (e) {
+                console.error('Gagal memuat riwayat status:', e);
+            }
+        },
+
+        async triggerSyncNow() {
+            if (this.isSyncing) return;
+            this.isSyncing = true;
+            this.syncFeedback = 'Sedang mensinkronisasi semua stream dan aplikasi...';
+            try {
+                const res = await fetch('/api/dashboard/trigger-sync', { method: 'POST' });
+                if (res.ok) {
+                    const data = await res.json();
+                    this.syncFeedback = `Sukses! Disinkronkan ${data.total_synced} stream dalam ${data.duration_ms} ms.`;
+                    await this.fetchSyncLogs();
+                    await this.fetchStatusHistory();
+                    await this.fetchMetrics();
+                } else {
+                    this.syncFeedback = 'Sinkronisasi gagal, periksa koneksi AMS.';
+                }
+            } catch (e) {
+                this.syncFeedback = 'Error koneksi ke server monitoring.';
+            } finally {
+                this.isSyncing = false;
+                setTimeout(() => { this.syncFeedback = ''; }, 6000);
             }
         },
         
@@ -270,7 +347,6 @@ function getDashChartOptions(isDark) {
             this.diskTotalGb = d.disk_total_gb ?? d.diskTotalGb ?? 0;
             this.diskFreeGb = d.disk_free_gb ?? d.diskFreeGb ?? 0;
             this.diskPercent = d.disk_percent ?? d.diskPercent ?? 0;
-            // Real free percentage (sisa / total * 100)
             this.diskFreePercent = this.diskTotalGb > 0 ? Math.round((this.diskFreeGb / this.diskTotalGb) * 1000) / 10 : 0;
             
             this.totalLiveStreams = d.total_live_streams ?? d.totalLiveStreams ?? 0;
@@ -282,7 +358,7 @@ function getDashChartOptions(isDark) {
             this.applications = d.applications || [];
             
             // Only update history from snapshot if on 1 hour range and chart is empty
-            if (d.history && this.historyHours === 1 && (!window._dashCharts.cpu || window._dashCharts.cpu.data.labels.length <= 1)) {
+            if (d.history && this.historyMode === 1 && (!window._dashCharts.cpu || window._dashCharts.cpu.data.labels.length <= 1)) {
                 this.applyHistory(d.history);
             }
         },
@@ -303,7 +379,7 @@ function getDashChartOptions(isDark) {
                 window._dashCharts.cpu.update('none');
             }
             
-            // Memory Chart
+            // Memory Chart (RAM % on y, JVM Heap MB on y1)
             if (window._dashCharts.mem) {
                 window._dashCharts.mem.data.labels = labels;
                 window._dashCharts.mem.data.datasets[0].data = data.memory_system || [];
@@ -311,7 +387,7 @@ function getDashChartOptions(isDark) {
                 window._dashCharts.mem.update('none');
             }
             
-            // Streams Chart
+            // Stream & Viewer Chart (Live Streams on y, Viewers on y1)
             if (window._dashCharts.stream) {
                 window._dashCharts.stream.data.labels = labels;
                 window._dashCharts.stream.data.datasets[0].data = data.live_streams || [];
@@ -321,18 +397,13 @@ function getDashChartOptions(isDark) {
         },
         
         initCharts() {
-            if (typeof Chart === 'undefined') {
-                setTimeout(() => this.initCharts(), 100);
-                return;
-            }
-            
-            // Destroy existing charts to prevent memory leaks
-            if (window._dashCharts.cpu) { window._dashCharts.cpu.destroy(); window._dashCharts.cpu = null; }
-            if (window._dashCharts.mem) { window._dashCharts.mem.destroy(); window._dashCharts.mem = null; }
-            if (window._dashCharts.stream) { window._dashCharts.stream.destroy(); window._dashCharts.stream = null; }
-            
             const isDark = document.documentElement.classList.contains('dark');
             const baseOptions = getDashChartOptions(isDark);
+            
+            // Destroy existing instances if re-initializing
+            if (window._dashCharts.cpu) window._dashCharts.cpu.destroy();
+            if (window._dashCharts.mem) window._dashCharts.mem.destroy();
+            if (window._dashCharts.stream) window._dashCharts.stream.destroy();
             
             // 1. CPU Sparkline
             const canvasCpu = document.getElementById('chart-cpu');
@@ -452,7 +523,6 @@ function getDashChartOptions(isDark) {
                 });
             }
             
-            // Setup ResizeObserver to guarantee charts adapt instantly when sidebar opens/collapses & window resizes
             if (window._dashObserver) {
                 window._dashObserver.disconnect();
             }
@@ -484,7 +554,7 @@ function getDashChartOptions(isDark) {
         </div>
     </template>
 
-    <!-- 1. TOP SYSTEM STATUS & UPTIME BAR (Spans full width evenly, responsive) -->
+    <!-- 1. TOP SYSTEM STATUS & UPTIME BAR -->
     <div class="flex items-center justify-between w-full flex-wrap gap-y-3 gap-x-2 sm:gap-x-4 p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-xs select-none shadow-sm">
         <div class="flex items-center gap-2 flex-shrink-0">
             <span class="w-2.5 h-2.5 rounded-full" :class="connected ? 'bg-emerald-500' : 'bg-rose-500'"></span>
@@ -521,30 +591,69 @@ function getDashChartOptions(isDark) {
     </div>
 
     <!-- 2, 3, 4. METRIC BLOCKS & SPARKLINE CHARTS (CPU, Memory, Streams) -->
-    <div class="space-y-2">
-        <!-- History Range Toolbar -->
-        <div class="flex items-center justify-between text-xs">
-            <span class="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider font-mono">
-                Riwayat Metrik Server
-            </span>
-            <div class="flex items-center gap-1 font-mono text-[10px]">
-                <span class="text-[var(--text-muted)] mr-1">Rentang:</span>
-                <button type="button" @click="fetchHistory(1)"
-                    :class="historyHours === 1 ? 'bg-[var(--accent)] text-white font-semibold' : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+    <div class="space-y-3">
+        <!-- History Range Toolbar with 1h, 6h, 24h, all history, and custom date range -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-xs shadow-sm">
+            <div class="flex items-center gap-2">
+                <span class="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider font-mono">
+                    Filter Riwayat Metrik:
+                </span>
+                <span x-show="isLoadingHistory" class="text-[10px] text-[var(--accent-text)] font-mono animate-pulse">
+                    Memuat data...
+                </span>
+            </div>
+            
+            <div class="flex items-center flex-wrap gap-1.5 font-mono text-[11px]">
+                <button type="button" @click="showCustomDateInputs = false; fetchHistory(1)"
+                    :class="historyMode === 1 ? 'bg-[var(--accent)] text-white font-semibold shadow-xs' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
                     class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer focus:outline-none">
                     1 Jam
                 </button>
-                <button type="button" @click="fetchHistory(6)"
-                    :class="historyHours === 6 ? 'bg-[var(--accent)] text-white font-semibold' : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                <button type="button" @click="showCustomDateInputs = false; fetchHistory(6)"
+                    :class="historyMode === 6 ? 'bg-[var(--accent)] text-white font-semibold shadow-xs' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
                     class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer focus:outline-none">
                     6 Jam
                 </button>
-                <button type="button" @click="fetchHistory(24)"
-                    :class="historyHours === 24 ? 'bg-[var(--accent)] text-white font-semibold' : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                <button type="button" @click="showCustomDateInputs = false; fetchHistory(24)"
+                    :class="historyMode === 24 ? 'bg-[var(--accent)] text-white font-semibold shadow-xs' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
                     class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer focus:outline-none">
                     24 Jam
                 </button>
+                <button type="button" @click="showCustomDateInputs = false; fetchHistory('all')"
+                    :class="historyMode === 'all' ? 'bg-[var(--accent)] text-white font-semibold shadow-xs' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                    class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer focus:outline-none">
+                    Seluruh Riwayat
+                </button>
+                <button type="button" @click="showCustomDateInputs = !showCustomDateInputs"
+                    :class="historyMode === 'custom' || showCustomDateInputs ? 'bg-amber-600 text-white font-semibold shadow-xs' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                    class="px-2.5 py-1 rounded border border-[var(--border-color)] transition-colors cursor-pointer focus:outline-none flex items-center gap-1">
+                    <span>Rentang Khusus</span>
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                </button>
             </div>
+        </div>
+
+        <!-- Custom Date Range Picker Container -->
+        <div x-show="showCustomDateInputs" x-transition class="p-3 rounded border border-amber-300 dark:border-amber-800/60 bg-amber-50/50 dark:bg-amber-950/20 text-xs flex flex-wrap items-center justify-between gap-3 shadow-sm">
+            <div class="flex items-center flex-wrap gap-3 font-mono text-[11px]">
+                <div class="flex items-center gap-1.5">
+                    <label class="text-[var(--text-muted)] font-medium">Dari:</label>
+                    <input type="date" x-model="customStartDate"
+                        class="px-2 py-1 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] focus:outline-none focus:border-[var(--accent)] text-xs">
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <label class="text-[var(--text-muted)] font-medium">Sampai:</label>
+                    <input type="date" x-model="customEndDate"
+                        class="px-2 py-1 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] focus:outline-none focus:border-[var(--accent)] text-xs">
+                </div>
+                <button type="button" @click="fetchHistory('custom')"
+                    class="px-3 py-1 rounded bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white font-medium text-xs cursor-pointer shadow-xs transition-colors">
+                    Terapkan Rentang
+                </button>
+            </div>
+            <span class="text-[10px] text-[var(--text-muted)] font-mono">
+                Data historis diambil dari database MySQL <code>ams_monitoring</code>
+            </span>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -558,7 +667,6 @@ function getDashChartOptions(isDark) {
                     <span class="text-3xl font-bold text-[var(--accent-text)]" x-text="cpuPercent"></span>
                     <span class="text-sm font-medium text-[var(--text-muted)]">%</span>
                 </div>
-                <!-- Sparkline Container with Empty & Loading State -->
                 <div class="h-24 w-full relative dash-chart-container">
                     <canvas id="chart-cpu" class="w-full h-full" x-show="!isHistoryEmpty"></canvas>
                     <div x-show="isHistoryEmpty" class="absolute inset-0 flex items-center justify-center text-[11px] text-[var(--text-muted)] font-mono italic">
@@ -568,16 +676,16 @@ function getDashChartOptions(isDark) {
                         Memuat riwayat...
                     </div>
                 </div>
-                <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right"
-                    x-text="'Riwayat ' + historyHours + ' jam terakhir'"></div>
+                <div class="text-[10px] text-[var(--text-subtle)] font-mono text-right">
+                    Persentase beban sistem (%)
+                </div>
             </div>
 
-            <!-- 2. Memory & JVM Block with Chart -->
+            <!-- 2. Memory Block with Chart -->
             <div class="p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] flex flex-col justify-between space-y-3">
                 <div class="flex items-center justify-between border-b border-[var(--border-color)] pb-2">
                     <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">Memory &amp; Heap JVM</span>
-                    <span class="text-[10px] font-mono text-[var(--text-muted)]"
-                        x-text="sysMemUsedGb + ' GB / ' + sysMemTotalGb + ' GB'"></span>
+                    <span class="text-[10px] font-mono text-[var(--text-muted)]">Heap: <strong x-text="jvmHeapUsedMb + ' MB'"></strong></span>
                 </div>
                 <div class="flex items-baseline justify-between font-mono">
                     <div>
@@ -585,11 +693,9 @@ function getDashChartOptions(isDark) {
                         <span class="text-sm font-medium text-[var(--text-muted)]">% RAM</span>
                     </div>
                     <div class="text-right">
-                        <span class="text-lg font-bold text-amber-600 dark:text-amber-400" x-text="jvmHeapUsedMb"></span>
-                        <span class="text-xs text-[var(--text-muted)]" x-text="'MB Heap (' + jvmHeapPercent + '%)'"></span>
+                        <span class="text-xs font-medium text-[var(--text-muted)]" x-text="sysMemUsedGb + ' / ' + sysMemTotalGb + ' GB'"></span>
                     </div>
                 </div>
-                <!-- Sparkline Container with Empty & Loading State -->
                 <div class="h-24 w-full relative dash-chart-container">
                     <canvas id="chart-mem" class="w-full h-full" x-show="!isHistoryEmpty"></canvas>
                     <div x-show="isHistoryEmpty" class="absolute inset-0 flex items-center justify-center text-[11px] text-[var(--text-muted)] font-mono italic">
@@ -620,7 +726,6 @@ function getDashChartOptions(isDark) {
                         <span class="text-xs text-[var(--text-muted)]">Penonton Total</span>
                     </div>
                 </div>
-                <!-- Sparkline Container with Empty & Loading State -->
                 <div class="h-24 w-full relative dash-chart-container">
                     <canvas id="chart-stream" class="w-full h-full" x-show="!isHistoryEmpty"></canvas>
                     <div x-show="isHistoryEmpty" class="absolute inset-0 flex items-center justify-center text-[11px] text-[var(--text-muted)] font-mono italic">
@@ -637,7 +742,7 @@ function getDashChartOptions(isDark) {
         </div>
     </div>
 
-    <!-- 5. STORAGE / DISK METRIC SECTION (Correct Free % & Consistent GB calculation) -->
+    <!-- 5. STORAGE / DISK METRIC SECTION -->
     <div class="p-4 rounded border border-[var(--border-color)] bg-[var(--bg-surface)] space-y-3 shadow-sm">
         <div class="flex items-center justify-between flex-wrap gap-2">
             <span class="text-xs font-semibold text-[var(--text-main)] uppercase tracking-wider font-mono">
@@ -648,7 +753,6 @@ function getDashChartOptions(isDark) {
                 (Tersisa: <span class="text-emerald-600 dark:text-emerald-400 font-semibold" x-text="diskFreeGb + ' GB'"></span>, <span class="text-[var(--text-main)] font-semibold" x-text="diskFreePercent + '%'"></span>)
             </span>
         </div>
-        <!-- Disk bar indicator (Progress bar represents used proportion with subtle high usage alert) -->
         <div class="w-full bg-[var(--bg-subtle)] rounded-full h-2.5 overflow-hidden border border-[var(--border-color)]">
             <div class="h-2.5 rounded-full transition-all duration-500"
                 :class="diskPercent > 90 ? 'bg-rose-500' : (diskPercent > 85 ? 'bg-amber-500' : 'bg-[var(--accent)]')"
@@ -656,7 +760,7 @@ function getDashChartOptions(isDark) {
         </div>
     </div>
 
-    <!-- 6 & 7. APPLICATION SUMMARY TABLE (Proportional balanced columns, uniform status badges) -->
+    <!-- 6. APPLICATION SUMMARY TABLE -->
     <div class="space-y-3">
         <div class="flex items-center justify-between">
             <div>
@@ -664,7 +768,7 @@ function getDashChartOptions(isDark) {
                     Daftar Aplikasi Ant Media Server
                 </h3>
                 <p class="text-[11px] text-[var(--text-muted)] mt-0.5">
-                    Ringkasan status kamera dan alokasi penyimpanan per aplikasi.
+                    Ringkasan status kamera dan alokasi penyimpanan per aplikasi (diambil menggunakan pagination lengkap).
                 </p>
             </div>
             <a href="/applications" class="text-xs font-medium text-[var(--accent-text)] hover:underline">
@@ -710,6 +814,119 @@ function getDashChartOptions(isDark) {
                                     :class="app.live_count > 0 ? 'badge-success' : 'badge-neutral'"
                                     x-text="app.status"></span>
                             </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 7. SINKRONISASI API & AUDIT PERUBAHAN STATUS (MySQL PERSISTENCE) -->
+    <div class="space-y-3">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+            <div>
+                <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--text-main)] font-mono">
+                    Sinkronisasi REST API &amp; Riwayat Status (MySQL)
+                </h3>
+                <p class="text-[11px] text-[var(--text-muted)] mt-0.5">
+                    Catatan audit berkala pemanggilan API, pagination, dan riwayat transisi status stream di database MySQL.
+                </p>
+            </div>
+            
+            <div class="flex items-center gap-2">
+                <span x-text="syncFeedback" class="text-xs font-mono text-[var(--accent-text)]"></span>
+                <button type="button" @click="triggerSyncNow()" :disabled="isSyncing"
+                    class="px-3 py-1.5 rounded bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-xs font-medium cursor-pointer shadow-xs transition-colors flex items-center gap-1.5 disabled:opacity-50">
+                    <svg class="w-3.5 h-3.5" :class="isSyncing ? 'animate-spin' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    <span x-text="isSyncing ? 'Menyinkronkan...' : 'Sinkronisasi Sekarang'"></span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Navigation Tabs for Sync Logs vs Status History -->
+        <div class="border-b border-[var(--border-color)] flex items-center gap-4 text-xs font-mono">
+            <button type="button" @click="auditTab = 'sync'"
+                :class="auditTab === 'sync' ? 'border-b-2 border-[var(--accent)] text-[var(--accent-text)] font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                class="pb-2 cursor-pointer transition-colors">
+                Log Sinkronisasi API (<span x-text="syncLogs.length"></span>)
+            </button>
+            <button type="button" @click="auditTab = 'status'"
+                :class="auditTab === 'status' ? 'border-b-2 border-[var(--accent)] text-[var(--accent-text)] font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'"
+                class="pb-2 cursor-pointer transition-colors">
+                Riwayat Transisi Status (<span x-text="statusHistory.length"></span>)
+            </button>
+        </div>
+
+        <!-- Tab 1: Sync Logs Table -->
+        <div x-show="auditTab === 'sync'" class="overflow-x-auto rounded border border-[var(--border-color)] bg-[var(--bg-surface)] shadow-sm">
+            <table class="w-full text-left text-xs border-collapse font-sans min-w-[640px]">
+                <thead>
+                    <tr class="border-b border-[var(--border-color)] bg-[var(--bg-subtle)] text-[11px] font-semibold text-[var(--text-muted)] font-mono select-none">
+                        <th class="px-4 py-2.5">Waktu</th>
+                        <th class="px-4 py-2.5">Aplikasi</th>
+                        <th class="px-4 py-2.5">Tipe Sync</th>
+                        <th class="px-4 py-2.5">Item Diperoleh</th>
+                        <th class="px-4 py-2.5">Durasi (ms)</th>
+                        <th class="px-4 py-2.5 text-right pr-6">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-[var(--border-color)] font-mono text-[11px]">
+                    <template x-if="syncLogs.length === 0">
+                        <tr>
+                            <td colspan="6" class="px-4 py-6 text-center text-[var(--text-muted)]">
+                                Belum ada log sinkronisasi API.
+                            </td>
+                        </tr>
+                    </template>
+                    <template x-for="log in syncLogs" :key="log.id">
+                        <tr class="hover:bg-[var(--bg-surface-hover)] transition-colors">
+                            <td class="px-4 py-2 text-[var(--text-muted)]" x-text="log.created_at"></td>
+                            <td class="px-4 py-2 font-semibold text-[var(--text-main)]" x-text="log.app_name"></td>
+                            <td class="px-4 py-2 text-[var(--text-muted)]" x-text="log.sync_type"></td>
+                            <td class="px-4 py-2 text-[var(--text-main)] font-semibold" x-text="log.items_synced + ' items'"></td>
+                            <td class="px-4 py-2 text-[var(--text-muted)]" x-text="log.duration_ms + ' ms'"></td>
+                            <td class="px-4 py-2 text-right pr-6">
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold"
+                                    :class="log.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'"
+                                    x-text="log.status"></span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Tab 2: Status History Table -->
+        <div x-show="auditTab === 'status'" class="overflow-x-auto rounded border border-[var(--border-color)] bg-[var(--bg-surface)] shadow-sm">
+            <table class="w-full text-left text-xs border-collapse font-sans min-w-[640px]">
+                <thead>
+                    <tr class="border-b border-[var(--border-color)] bg-[var(--bg-subtle)] text-[11px] font-semibold text-[var(--text-muted)] font-mono select-none">
+                        <th class="px-4 py-2.5">Waktu</th>
+                        <th class="px-4 py-2.5">Aplikasi</th>
+                        <th class="px-4 py-2.5">Stream ID</th>
+                        <th class="px-4 py-2.5">Status Lama</th>
+                        <th class="px-4 py-2.5">Status Baru</th>
+                        <th class="px-4 py-2.5">Keterangan</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-[var(--border-color)] font-mono text-[11px]">
+                    <template x-if="statusHistory.length === 0">
+                        <tr>
+                            <td colspan="6" class="px-4 py-6 text-center text-[var(--text-muted)]">
+                                Belum ada riwayat transisi status.
+                            </td>
+                        </tr>
+                    </template>
+                    <template x-for="item in statusHistory" :key="item.id">
+                        <tr class="hover:bg-[var(--bg-surface-hover)] transition-colors">
+                            <td class="px-4 py-2 text-[var(--text-muted)]" x-text="item.timestamp"></td>
+                            <td class="px-4 py-2 font-semibold text-[var(--text-main)]" x-text="item.app_name"></td>
+                            <td class="px-4 py-2 text-cyan-600 dark:text-cyan-400 font-semibold" x-text="item.stream_id"></td>
+                            <td class="px-4 py-2 text-[var(--text-muted)]" x-text="item.old_status"></td>
+                            <td class="px-4 py-2 font-bold"
+                                :class="item.new_status === 'broadcasting' ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-500'"
+                                x-text="item.new_status"></td>
+                            <td class="px-4 py-2 text-[var(--text-muted)] text-[10px]" x-text="item.details"></td>
                         </tr>
                     </template>
                 </tbody>
