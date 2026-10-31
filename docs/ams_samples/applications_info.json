@@ -13,26 +13,62 @@
   },
   {
     "name": "atcs",
-    "liveStreamCount": 1,
+    "liveStreamCount": 36,
     "vodCount": 0,
-    "storage": 30320216
+    "storage": 744913821
   },
   {
     "name": "atcs-kota",
-    "liveStreamCount": 0,
+    "liveStreamCount": 36,
     "vodCount": 0,
-    "storage": 30320242
+    "storage": 444582577
   },
   {
-    "name": "cctv-sekolah",
-    "liveStreamCount": 1,
+    "name": "cctv-bantul",
+    "liveStreamCount": 22,
     "vodCount": 0,
-    "storage": 36042582
+    "storage": 370648139
+  },
+  {
+    "name": "cctv-kominfogk",
+    "liveStreamCount": 14,
+    "vodCount": 0,
+    "storage": 189517240
+  },
+  {
+    "name": "cctv-kominfosleman",
+    "liveStreamCount": 129,
+    "vodCount": 0,
+    "storage": 657056640
+  },
+  {
+    "name": "cctv-kp",
+    "liveStreamCount": 11,
+    "vodCount": 0,
+    "storage": 177460336
+  },
+  {
+    "name": "cctv-public",
+    "liveStreamCount": 8,
+    "vodCount": 0,
+    "storage": 177277373
+  },
+  {
+    "name": "cctv-sungai",
+    "liveStreamCount": 0,
+    "vodCount": 0,
+    "storage": 35405109
+  },
+  {
+    "name": "cctv-uptmalioboro",
+    "liveStreamCount": 14,
+    "vodCount": 0,
+    "storage": 192821373
   },
   {
     "name": "live",
     "liveStreamCount": 0,
-    "vodCount": 0,
-    "storage": 30315742
+    "vodCount": 2,
+    "storage": 225686854
   }
 ]

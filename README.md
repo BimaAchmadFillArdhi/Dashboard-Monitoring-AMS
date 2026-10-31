@@ -117,7 +117,7 @@ Salin `.env.example` ke `.env` lalu sesuaikan konfigurasi:
 cp .env.example .env
 ```
 Variabel penting:
-- `AMS_BASE_URL`: URL Ant Media Server (contoh: `http://103.131.105.122:5080`)
+- `AMS_BASE_URL`: URL Ant Media Server (contoh: `http://103.255.15.138:5080`)
 - `AMS_USER`: Email user AMS (contoh: `wiko@gmail.com`)
 - `AMS_PASSWORD`: Password user AMS (contoh: `wiko2026`)
 - `POLL_INTERVAL_SECONDS`: Frekuensi background ingest log (default: `5`)

@@ -111,7 +111,7 @@ class StreamMetricHistory(Base):
     app_name = Column(String(64), nullable=False)
     stream_id = Column(String(128), nullable=False)
     status = Column(String(32), nullable=False, default="finished")
-    bitrate = Column(Integer, nullable=False, default=0)         # in bps
+    bitrate = Column(BigInteger, nullable=False, default=0)         # in bps
     bitrate_mbps = Column(Float, nullable=False, default=0.0)    # in Mbps
     speed = Column(Float, nullable=False, default=0.0)
     total_viewers = Column(Integer, nullable=False, default=0)
@@ -156,7 +156,7 @@ class AmsStreamCurrent(Base):
     stream_type = Column(String(32), nullable=True)                  # streamSource, ipCamera, liveStream
     stream_url = Column(Text, nullable=True)                         # Raw RTSP / RTMP url
     masked_url = Column(Text, nullable=True)                         # RTSP url with credentials stripped
-    bitrate = Column(Integer, default=0, nullable=False)
+    bitrate = Column(BigInteger, default=0, nullable=False)
     speed = Column(Float, default=0.0, nullable=False)
     total_viewers = Column(Integer, default=0, nullable=False)
     hls_viewers = Column(Integer, default=0, nullable=False)

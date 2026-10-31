@@ -4,7 +4,13 @@
     "WebRTCApp",
     "atcs",
     "atcs-kota",
-    "cctv-sekolah",
+    "cctv-bantul",
+    "cctv-kominfogk",
+    "cctv-kominfosleman",
+    "cctv-kp",
+    "cctv-public",
+    "cctv-sungai",
+    "cctv-uptmalioboro",
     "live"
   ]
 }

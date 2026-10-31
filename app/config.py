@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # AMS Settings
-    AMS_BASE_URL: str = "http://103.131.105.122:5080"
+    AMS_BASE_URL: str = "http://103.255.15.138:5080"
     AMS_USER: str = "wiko@gmail.com"
     AMS_PASSWORD: str = "wiko2026"
     AMS_TIMEOUT_SECONDS: float = 5.0

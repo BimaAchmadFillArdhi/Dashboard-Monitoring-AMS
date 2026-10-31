@@ -1,42 +1,42 @@
 {
-  "instanceId": "14a283d56c7ead981e2b05a31996be39",
+  "instanceId": "65e17ee618d86d93f27d108bd8376a50",
   "cpuUsage": {
-    "processCPUTime": 6020050000,
-    "systemCPULoad": 40,
-    "processCPULoad": 0,
-    "systemLoadAverageLastMinute": 10.45703125
+    "processCPUTime": 1128689480000,
+    "systemCPULoad": 12,
+    "processCPULoad": 10,
+    "systemLoadAverageLastMinute": 4.4580078125
   },
   "jvmMemoryUsage": {
-    "maxMemory": 16248733696,
-    "totalMemory": 671088640,
-    "freeMemory": 457860320,
-    "inUseMemory": 213228320
+    "maxMemory": 25300041728,
+    "totalMemory": 1207959552,
+    "freeMemory": 489129296,
+    "inUseMemory": 718830256
   },
   "systemInfo": {
     "osName": "Linux",
     "osArch": "amd64",
     "javaVersion": "21",
-    "processorCount": 24
+    "processorCount": 32
   },
   "systemMemoryInfo": {
-    "virtualMemory": 33925951488,
-    "totalMemory": 64990806016,
-    "freeMemory": 6263906304,
-    "inUseMemory": 58726899712,
+    "virtualMemory": 99546316800,
+    "totalMemory": 101156229120,
+    "freeMemory": 9524383744,
+    "inUseMemory": 91631845376,
     "totalSwapSpace": 8589930496,
-    "freeSwapSpace": 8575684608,
-    "inUseSwapSpace": 14245888,
-    "availableMemory": 50009137152
+    "freeSwapSpace": 8589930496,
+    "inUseSwapSpace": 0,
+    "availableMemory": 28786941952
   },
   "fileSystemInfo": {
-    "usableSpace": 1078822240256,
-    "totalSpace": 1323131658240,
-    "freeSpace": 1133726801920,
-    "inUseSpace": 189404856320
+    "usableSpace": 62597181440,
+    "totalSpace": 105089261568,
+    "freeSpace": 67982667776,
+    "inUseSpace": 37106593792
   },
   "jvmNativeMemoryUsage": {
-    "inUseMemory": 3898077184,
-    "maxMemory": 64994934784
+    "inUseMemory": 69632589824,
+    "maxMemory": 101200166912
   },
   "softwareVersion": {
     "versionName": "3.1.0",
@@ -46,10 +46,10 @@
   "gpuUsageInfo": [],
   "ffmpegBuildInfo": "--prefix=.. --disable-iconv --disable-opencl --disable-sdl2 --disable-bzlib --disable-lzma --disable-linux-perf --disable-xlib --disable-decoder=h264_crystalhd --disable-decoder=mpeg2_crystalhd --disable-decoder=vc1_crystalhd --disable-decoder=mpeg4_crystalhd --disable-decoder=msmpeg4_crystalhd --disable-decoder=msmpeg4_crystalhd --disable-decoder=wmv3_crystalhd --enable-shared --enable-version3 --enable-runtime-cpudetect --enable-zlib --enable-libmp3lame --enable-libspeex --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libvo-amrwbenc --enable-openssl --enable-libopenh264 --enable-libvpx --enable-libfreetype --enable-libopus --enable-libxml2 --enable-libsrt --enable-libwebp --enable-libaom --enable-libsvtav1 --enable-libzimg --enable-libmfx --enable-libdrm --enable-cuda --enable-cuvid --enable-nvenc --enable-pthreads --enable-libxcb --enable-libpulse --cc='gcc -m64' --extra-cflags='-I../include/ -I../include/libxml2 -I../include/mfx -I../include/svt-av1' --extra-ldflags=-L../lib/ --extra-libs='-lstdc++ -lpthread -ldl -lz -lm -lva-drm -lva-x11 -lva'",
   "dbAverageQueryTimeMs": 1,
-  "localWebRTCLiveStreams": -6,
-  "localLiveStreams": 2,
+  "localWebRTCLiveStreams": -12,
+  "localLiveStreams": 271,
   "localWebRTCViewers": 0,
-  "localHLSViewers": 0,
+  "localHLSViewers": 1294,
   "localDASHViewers": 0,
   "encoders-blocked": 0,
   "encoders-not-opened": 0,
@@ -57,8 +57,8 @@
   "vertx-worker-thread-queue-size": 0,
   "webrtc-vertx-worker-thread-queue-size": 0,
   "server-timing": {
-    "up-time": 287928636,
-    "start-time": 1792712268064
+    "up-time": 335238740,
+    "start-time": 1793085187904
   },
-  "totalLiveStreamSize": 2
+  "totalLiveStreamSize": 270
 }

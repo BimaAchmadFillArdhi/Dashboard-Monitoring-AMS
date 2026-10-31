@@ -1,6 +1,6 @@
 # Dokumentasi Ant Media Server (AMS) CE 3.1.0 REST API
 
-Dokumentasi ini dibuat berdasarkan verifikasi langsung ke server Ant Media Server nyata di `http://103.131.105.122:5080` melalui skrip `scripts/discover_ams.py`.
+Dokumentasi ini dibuat berdasarkan verifikasi langsung ke server Ant Media Server nyata di `http://103.255.15.138:5080` melalui skrip `scripts/discover_ams.py`.
 
 ---
 
