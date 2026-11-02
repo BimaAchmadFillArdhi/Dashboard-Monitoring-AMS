@@ -647,18 +647,12 @@
 
                                 <!-- Action -->
                                 <td class="px-4 py-3 text-right">
-                                    <div class="inline-flex items-center gap-1.5">
-                                        <a :href="'/applications/' + encodeURIComponent(selectedApp) + '/streams/' + encodeURIComponent(s.stream_id)"
-                                            @click.stop
-                                            class="px-2 py-0.5 rounded text-[11px] font-medium border border-[var(--border-color)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-surface-hover)] text-[var(--accent-text)] cursor-pointer"
-                                            title="Buka Halaman Monitoring Stream Penuh">
-                                            Grafik
-                                        </a>
-                                        <button type="button" @click.stop="openDrawer(s.stream_id)"
-                                            class="px-2 py-0.5 rounded text-[11px] font-medium border border-[var(--border-color)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-main)] cursor-pointer">
-                                            Detail
-                                        </button>
-                                    </div>
+                                    <a :href="'/applications/' + encodeURIComponent(selectedApp) + '/streams/' + encodeURIComponent(s.stream_id)"
+                                        @click.stop
+                                        class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium border border-[var(--border-color)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-surface-hover)] text-[var(--accent-text)] cursor-pointer"
+                                        title="Buka Halaman Monitoring Stream Penuh">
+                                        Grafik
+                                    </a>
                                 </td>
                             </tr>
                         </template>
