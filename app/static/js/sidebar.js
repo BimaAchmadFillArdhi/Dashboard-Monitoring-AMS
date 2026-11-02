@@ -29,6 +29,18 @@ document.addEventListener('alpine:init', () => {
         // Add application placeholder modal
         isAddAppModalOpen: false,
 
+
+        // Tooltip state for truncated app names
+        tooltip: {
+            visible: false,
+            text: '',
+            x: 0,
+            y: 0
+        },
+        tooltipTimer: null,
+        pendingTooltipApp: null,
+        lastMouseX: 0,
+        lastMouseY: 0,
         // Applications overview list initialized synchronously from cache
         apps: (function() {
             try {
@@ -91,9 +103,17 @@ document.addEventListener('alpine:init', () => {
                     });
                 }
             });
+
+            // Auto-hide floating tooltip on any container scroll
+            window.addEventListener('scroll', () => {
+                if (this.tooltip.visible || this.tooltipTimer) {
+                    this.hideTooltip();
+                }
+            }, true);
         },
 
         toggle() {
+            this.hideTooltip();
             this.isCollapsed = !this.isCollapsed;
             localStorage.setItem('wiko_sidebar_collapsed', this.isCollapsed);
             if (this.isCollapsed) {
@@ -102,14 +122,17 @@ document.addEventListener('alpine:init', () => {
         },
 
         toggleMobile() {
+            this.hideTooltip();
             this.isMobileOpen = !this.isMobileOpen;
         },
 
         closeMobile() {
+            this.hideTooltip();
             this.isMobileOpen = false;
         },
 
         toggleAppsDropdown() {
+            this.hideTooltip();
             this.isAppsOpen = !this.isAppsOpen;
             localStorage.setItem('wiko_apps_dropdown', this.isAppsOpen);
         },
@@ -119,10 +142,12 @@ document.addEventListener('alpine:init', () => {
         },
 
         closeFlyout() {
+            this.hideTooltip();
             this.isFlyoutOpen = false;
         },
 
         toggleFlyout() {
+            this.hideTooltip();
             this.isFlyoutOpen = !this.isFlyoutOpen;
         },
 
@@ -224,10 +249,10 @@ document.addEventListener('alpine:init', () => {
         },
 
         selectApp(appName) {
+            this.hideTooltip();
             this.selectedApp = appName;
             this.isFlyoutOpen = false;
             this.isMobileOpen = false;
-
             if (window.location.pathname.startsWith('/applications')) {
                 const url = new URL(window.location.href);
                 url.searchParams.set('app', appName);
@@ -256,6 +281,93 @@ document.addEventListener('alpine:init', () => {
                     window.location.href = targetUrl;
                 }
             }
+        },
+
+        // Tooltip event handlers & positioning logic
+        handleAppMouseEnter(event, appName) {
+            if (this.tooltipTimer) {
+                clearTimeout(this.tooltipTimer);
+                this.tooltipTimer = null;
+            }
+
+            const target = event.currentTarget;
+            const nameSpan = target ? target.querySelector('span.truncate') : null;
+            // Only show tooltip if the text is genuinely truncated (scrollWidth > clientWidth)
+            const isTruncated = nameSpan ? (nameSpan.scrollWidth > nameSpan.clientWidth + 1) : true;
+            if (!isTruncated) {
+                this.hideTooltip();
+                return;
+            }
+
+            this.pendingTooltipApp = appName;
+            this.lastMouseX = event.clientX;
+            this.lastMouseY = event.clientY;
+
+            // Delay 200ms before showing tooltip
+            this.tooltipTimer = setTimeout(() => {
+                if (this.pendingTooltipApp === appName) {
+                    this.showTooltip(appName, this.lastMouseX, this.lastMouseY);
+                }
+            }, 200);
+        },
+
+        handleAppMouseMove(event) {
+            this.lastMouseX = event.clientX;
+            this.lastMouseY = event.clientY;
+
+            if (this.tooltip.visible) {
+                this.updateTooltipPosition(event.clientX, event.clientY);
+            }
+        },
+
+        handleAppMouseLeave() {
+            this.hideTooltip();
+        },
+
+        showTooltip(text, clientX, clientY) {
+            this.tooltip.text = text;
+            this.tooltip.visible = true;
+            this.updateTooltipPosition(clientX, clientY);
+
+            // Refine position in the next animation frame once DOM dimensions are measured
+            requestAnimationFrame(() => {
+                if (this.tooltip.visible) {
+                    this.updateTooltipPosition(this.lastMouseX, this.lastMouseY);
+                }
+            });
+        },
+
+        hideTooltip() {
+            if (this.tooltipTimer) {
+                clearTimeout(this.tooltipTimer);
+                this.tooltipTimer = null;
+            }
+            this.pendingTooltipApp = null;
+            this.tooltip.visible = false;
+            this.tooltip.text = '';
+        },
+
+        updateTooltipPosition(clientX, clientY) {
+            const tooltipEl = document.getElementById('sidebar-app-tooltip');
+            const width = tooltipEl && tooltipEl.offsetWidth ? tooltipEl.offsetWidth : 160;
+            const height = tooltipEl && tooltipEl.offsetHeight ? tooltipEl.offsetHeight : 28;
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+
+            let x = clientX + 8;
+            let y = clientY + 16;
+
+            // Viewport boundary clamping: prevent clipping on right/bottom edges
+            if (x + width + 8 > viewportWidth) {
+                x = Math.max(8, viewportWidth - width - 8);
+            }
+            if (y + height + 8 > viewportHeight) {
+                // Flip above the cursor if it would overflow the bottom viewport
+                y = Math.max(8, clientY - height - 8);
+            }
+
+            this.tooltip.x = x;
+            this.tooltip.y = y;
         }
     });
 });
