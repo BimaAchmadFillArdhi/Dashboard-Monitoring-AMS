@@ -168,21 +168,11 @@
                                     </svg>
                                     <span class="truncate" x-text="app.name"></span>
                                 </div>
-<<<<<<< Updated upstream
-                                <div class="flex items-center gap-1 flex-shrink-0 ml-1.5">
-                                    <template x-if="app.problematic_count > 0">
-                                        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium"
-                                              x-text="app.problematic_count + ' bermasalah'"></span>
-                                    </template>
-                                    <span class="text-[10px] font-mono text-[var(--text-muted)]"
-                                        x-text="app.live_count == null ? '— live' : app.live_count + ' live'"></span>
-                                </div>
-=======
                                 <template x-if="app.problematic_count > 0">
-                                    <span class="ml-2 flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium leading-none"
-                                          x-text="app.problematic_count"></span>
+                                    <span
+                                        class="ml-2 flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium leading-none"
+                                        x-text="app.problematic_count"></span>
                                 </template>
->>>>>>> Stashed changes
                             </button>
                         </div>
                     </template>
@@ -254,21 +244,11 @@
                                     </svg>
                                     <span class="truncate" x-text="app.name"></span>
                                 </div>
-<<<<<<< Updated upstream
-                                <div class="flex items-center gap-1.5 flex-shrink-0 ml-1.5">
-                                    <template x-if="app.problematic_count > 0">
-                                        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium"
-                                              x-text="app.problematic_count + ' bermasalah'"></span>
-                                    </template>
-                                    <span class="text-[10px] font-mono text-[var(--text-muted)]"
-                                        x-text="app.live_count == null ? '— live' : app.live_count + ' live'"></span>
-                                </div>
-=======
                                 <template x-if="app.problematic_count > 0">
-                                    <span class="ml-2 flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium leading-none"
-                                          x-text="app.problematic_count"></span>
+                                    <span
+                                        class="ml-2 flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium leading-none"
+                                        x-text="app.problematic_count"></span>
                                 </template>
->>>>>>> Stashed changes
                             </button>
                         </div>
                     </template>
@@ -431,21 +411,11 @@
                                     </svg>
                                     <span class="truncate" x-text="app.name"></span>
                                 </div>
-<<<<<<< Updated upstream
-                                <div class="flex items-center gap-1.5 flex-shrink-0 ml-1.5">
-                                    <template x-if="app.problematic_count > 0">
-                                        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium"
-                                              x-text="app.problematic_count + ' bermasalah'"></span>
-                                    </template>
-                                    <span class="text-[10px] font-mono text-[var(--text-muted)]"
-                                        x-text="app.live_count == null ? '— live' : app.live_count + ' live'"></span>
-                                </div>
-=======
                                 <template x-if="app.problematic_count > 0">
-                                    <span class="ml-2 flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium leading-none"
-                                          x-text="app.problematic_count"></span>
+                                    <span
+                                        class="ml-2 flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium leading-none"
+                                        x-text="app.problematic_count"></span>
                                 </template>
->>>>>>> Stashed changes
                             </button>
                         </div>
                     </template>
@@ -529,18 +499,12 @@
 </div>
 
 <!-- Floating Tooltip for Truncated Sidebar App Names -->
-<div id="sidebar-app-tooltip"
-     x-show="$store.sidebar.tooltip.visible"
-     x-transition:enter="transition-opacity duration-150 ease-out"
-     x-transition:enter-start="opacity-0"
-     x-transition:enter-end="opacity-100"
-     x-transition:leave="transition-opacity duration-100 ease-in"
-     x-transition:leave-start="opacity-100"
-     x-transition:leave-end="opacity-0"
-     style="display: none;"
-     role="tooltip"
-     class="pointer-events-none fixed z-[9999] px-2.5 py-1 text-xs font-medium rounded-lg bg-[var(--sidebar-text)] text-[var(--sidebar-bg)] shadow-md whitespace-nowrap"
-     :style="`left: ${$store.sidebar.tooltip.x}px; top: ${$store.sidebar.tooltip.y}px;`"
-     x-text="$store.sidebar.tooltip.text">
+<div id="sidebar-app-tooltip" x-show="$store.sidebar.tooltip.visible"
+    x-transition:enter="transition-opacity duration-150 ease-out" x-transition:enter-start="opacity-0"
+    x-transition:enter-end="opacity-100" x-transition:leave="transition-opacity duration-100 ease-in"
+    x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0" style="display: none;" role="tooltip"
+    class="pointer-events-none fixed z-[9999] px-2.5 py-1 text-xs font-medium rounded-lg bg-[var(--sidebar-text)] text-[var(--sidebar-bg)] shadow-md whitespace-nowrap"
+    :style="`left: ${$store.sidebar.tooltip.x}px; top: ${$store.sidebar.tooltip.y}px;`"
+    x-text="$store.sidebar.tooltip.text">
 </div>
 {% endmacro %}
