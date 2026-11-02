@@ -5,6 +5,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.clients.ams_client import AMSAPIError
 from app.clients.models import BroadcastStream, SystemResources
 from app.db.models import AmsStreamCurrent, Base
 from app.services.application_service import ApplicationService
@@ -55,13 +56,13 @@ async def test_failed_ams_request_uses_app_scoped_mysql_snapshot(
 
     class UnavailableAMS:
         async def get_broadcasts_count(self, *args, **kwargs):
-            raise RuntimeError("AMS timeout")
+            raise AMSAPIError("AMS timeout")
 
         async def get_all_broadcasts(self, *args, **kwargs):
-            raise RuntimeError("AMS timeout")
+            raise AMSAPIError("AMS timeout")
 
         async def get_applications_info(self, **kwargs):
-            raise RuntimeError("AMS timeout")
+            raise AMSAPIError("AMS timeout")
 
     monkeypatch.setattr(application_service_module, "ams_client", UnavailableAMS())
     service = ApplicationService()

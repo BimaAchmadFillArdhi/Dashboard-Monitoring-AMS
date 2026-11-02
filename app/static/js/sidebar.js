@@ -33,12 +33,20 @@ document.addEventListener('alpine:init', () => {
         apps: (function() {
             try {
                 const cached = localStorage.getItem('wiko_cached_apps');
-                return cached ? JSON.parse(cached) : [];
+                return cached
+                    ? JSON.parse(cached).map(app => ({
+                        ...app,
+                        stream_count: null,
+                        live_count: null,
+                        problematic_count: null
+                    }))
+                    : [];
             } catch (e) {
                 return [];
             }
         })(),
         isLoadingApps: false,
+        appsUnavailable: true,
 
         // Selected application
         selectedApp: (function() {
@@ -130,21 +138,44 @@ document.addEventListener('alpine:init', () => {
             this.isLoadingApps = true;
             try {
                 const res = await fetch('/api/applications');
-                if (res.ok) {
-                    this.apps = await res.json();
-                    try {
-                        localStorage.setItem('wiko_cached_apps', JSON.stringify(this.apps));
-                    } catch (e) {}
-
-                    if (this.apps.length > 0 && !this.apps.some(a => a.name === this.selectedApp)) {
-                        const params = new URLSearchParams(window.location.search);
-                        if (!params.get('app')) {
-                            this.selectedApp = this.apps[0].name;
-                        }
-                    }
-                    window.dispatchEvent(new CustomEvent('ams:apps-loaded', { detail: { apps: this.apps } }));
+                if (!res.ok) {
+                    throw new Error(`Permintaan ringkasan aplikasi gagal: HTTP ${res.status}`);
                 }
+
+                const apps = await res.json();
+                if (!Array.isArray(apps)) {
+                    throw new Error('Respons ringkasan aplikasi bukan berupa daftar');
+                }
+
+                this.apps = apps;
+                this.appsUnavailable = false;
+                try {
+                    localStorage.setItem('wiko_cached_apps', JSON.stringify(this.apps));
+                } catch (e) {}
+
+                if (this.apps.length > 0 && !this.apps.some(a => a.name === this.selectedApp)) {
+                    const params = new URLSearchParams(window.location.search);
+                    if (!params.get('app')) {
+                        this.selectedApp = this.apps[0].name;
+                    }
+                }
+                window.dispatchEvent(new CustomEvent('ams:apps-loaded', {
+                    detail: { apps: this.apps, unavailable: false }
+                }));
             } catch (err) {
+                this.appsUnavailable = true;
+                this.apps = this.apps.map(app => ({
+                    ...app,
+                    stream_count: null,
+                    live_count: null,
+                    problematic_count: null
+                }));
+                try {
+                    localStorage.setItem('wiko_cached_apps', JSON.stringify(this.apps));
+                } catch (storageError) {}
+                window.dispatchEvent(new CustomEvent('ams:apps-loaded', {
+                    detail: { apps: this.apps, unavailable: true }
+                }));
                 console.error('Gagal mengambil daftar aplikasi di sidebar:', err);
             } finally {
                 this.isLoadingApps = false;

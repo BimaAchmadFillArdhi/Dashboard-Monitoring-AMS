@@ -145,6 +145,10 @@
                 </div>
 
                 <!-- Tree List in Flyout -->
+                <div x-show="$store.sidebar.appsUnavailable" role="status"
+                    class="px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">
+                    Hitungan aplikasi tidak tersedia dari AMS.
+                </div>
                 <div
                     class="relative ml-2 pl-3 border-l border-[var(--sidebar-tree-line)] max-h-56 overflow-y-auto scrollbar-thin py-0.5 space-y-0.5">
                     <template x-for="app in $store.sidebar.filteredApps" :key="app.name">
@@ -167,7 +171,7 @@
                                               x-text="app.problematic_count + ' bermasalah'"></span>
                                     </template>
                                     <span class="text-[10px] font-mono text-[var(--text-muted)]"
-                                        x-text="(app.live_count || 0) + ' live'"></span>
+                                        x-text="app.live_count == null ? '— live' : app.live_count + ' live'"></span>
                                 </div>
                             </button>
                         </div>
@@ -214,6 +218,10 @@
                 </div>
 
                 <!-- Tree List of All Apps -->
+                <div x-show="$store.sidebar.appsUnavailable" role="status"
+                    class="px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">
+                    Hitungan aplikasi tidak tersedia dari AMS.
+                </div>
                 <div
                     class="relative ml-4 pl-3 border-l border-[var(--sidebar-tree-line)] max-h-60 overflow-y-auto scrollbar-thin py-0.5 space-y-0.5">
                     <template x-for="app in $store.sidebar.filteredApps" :key="app.name">
@@ -239,7 +247,7 @@
                                               x-text="app.problematic_count + ' bermasalah'"></span>
                                     </template>
                                     <span class="text-[10px] font-mono text-[var(--text-muted)]"
-                                        x-text="(app.live_count || 0) + ' live'"></span>
+                                        x-text="app.live_count == null ? '— live' : app.live_count + ' live'"></span>
                                 </div>
                             </button>
                         </div>
@@ -380,6 +388,10 @@
                     </button>
                 </div>
 
+                <div x-show="$store.sidebar.appsUnavailable" role="status"
+                    class="px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">
+                    Hitungan aplikasi tidak tersedia dari AMS.
+                </div>
                 <div
                     class="relative ml-4 pl-3 border-l border-[var(--sidebar-tree-line)] max-h-56 overflow-y-auto scrollbar-thin py-0.5 space-y-0.5">
                     <template x-for="app in $store.sidebar.filteredApps" :key="app.name">
@@ -402,7 +414,7 @@
                                               x-text="app.problematic_count + ' bermasalah'"></span>
                                     </template>
                                     <span class="text-[10px] font-mono text-[var(--text-muted)]"
-                                        x-text="(app.live_count || 0) + ' live'"></span>
+                                        x-text="app.live_count == null ? '— live' : app.live_count + ' live'"></span>
                                 </div>
                             </button>
                         </div>

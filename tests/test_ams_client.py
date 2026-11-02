@@ -1,5 +1,7 @@
 import json
 import pytest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from pathlib import Path
 
 from app.clients.models import (
@@ -17,7 +19,12 @@ from app.clients.models import (
     LogFileChunk,
     mask_rtsp_url,
 )
-from app.clients.ams_client import CircuitBreaker, CircuitBreakerState, AMSClient
+from app.clients.ams_client import (
+    AMSAPIError,
+    CircuitBreaker,
+    CircuitBreakerState,
+    AMSClient,
+)
 
 SAMPLES_DIR = Path(__file__).resolve().parent.parent / "docs" / "ams_samples"
 
@@ -123,6 +130,57 @@ def test_circuit_breaker_transitions():
     cb.record_success()
     assert cb.state == CircuitBreakerState.CLOSED
     assert cb.failure_count == 0
+
+
+@pytest.mark.asyncio
+async def test_get_all_broadcasts_paginates_without_count_endpoint(monkeypatch):
+    client = AMSClient()
+    all_streams = [
+        BroadcastStream(streamId=f"stream-{index}", status="broadcasting" if index % 2 else "finished")
+        for index in range(239)
+    ]
+    requested_offsets = []
+
+    async def get_page(app_name, offset, size, *, strict=False):
+        requested_offsets.append(offset)
+        return all_streams[offset:offset + size]
+
+    monkeypatch.setattr(client, "get_broadcasts_list", get_page)
+    monkeypatch.setattr(
+        client,
+        "get_broadcasts_count",
+        AsyncMock(side_effect=AssertionError("count endpoint must not determine completeness")),
+    )
+
+    streams = await client.get_all_broadcasts("atcs-kota", batch_size=50)
+
+    assert len(streams) == 239
+    assert sum(stream.status == "broadcasting" for stream in streams) == 119
+    assert requested_offsets == [0, 50, 100, 150, 200]
+
+
+@pytest.mark.asyncio
+async def test_broadcast_api_failures_raise_instead_of_returning_empty_data(monkeypatch):
+    client = AMSClient()
+    monkeypatch.setattr(client, "request", AsyncMock(return_value=None))
+    monkeypatch.setattr(client, "proxy_request", AsyncMock(return_value=None))
+
+    with pytest.raises(AMSAPIError):
+        await client.get_applications_info()
+    with pytest.raises(AMSAPIError):
+        await client.get_broadcasts_count("atcs")
+    with pytest.raises(AMSAPIError):
+        await client.get_broadcasts_list("atcs")
+
+    monkeypatch.setattr(client, "request", AsyncMock(return_value=SimpleNamespace(json=lambda: {})))
+    monkeypatch.setattr(client, "proxy_request", AsyncMock(return_value=SimpleNamespace(json=lambda: {})))
+
+    with pytest.raises(AMSAPIError):
+        await client.get_applications_info()
+    with pytest.raises(AMSAPIError):
+        await client.get_broadcasts_count("atcs")
+    with pytest.raises(AMSAPIError):
+        await client.get_broadcasts_list("atcs")
 
 
 @pytest.mark.asyncio
