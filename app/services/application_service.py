@@ -46,6 +46,7 @@ class VoDTableRowDTO(BaseModel):
 
 class AppSummaryDTO(BaseModel):
     name: str
+    stream_count: int
     live_count: int
     vod_count: int
     storage_mb: float
@@ -56,25 +57,24 @@ class ApplicationService:
     def __init__(self):
         self._last_saved_ts: Dict[str, float] = {}
     async def get_applications_overview(self, session: AsyncSession) -> List[AppSummaryDTO]:
-        """Fetch all applications with live count, storage, and problematic CCTV count."""
+        """Fetch complete stream/live counts and health summaries for every application."""
         apps_info = await ams_client.get_applications_info()
         result = []
 
         for app in apps_info:
             prob_count = 0
-            try:
-                # Fetch streams to evaluate health
-                streams = await ams_client.get_all_broadcasts(app.name, batch_size=50)
-                for s in streams:
-                    rep = await health_service.evaluate_stream_health(s, app.name, session)
-                    if rep.status in ("Bermasalah", "Perhatian"):
-                        prob_count += 1
-            except Exception:
-                pass
+            streams = await ams_client.get_all_broadcasts(app.name, batch_size=50)
+            stream_count = len(streams)
+            live_count = sum(1 for stream in streams if stream.status == "broadcasting")
+            for s in streams:
+                rep = await health_service.evaluate_stream_health(s, app.name, session)
+                if rep.status in ("Bermasalah", "Perhatian"):
+                    prob_count += 1
 
             result.append(AppSummaryDTO(
                 name=app.name,
-                live_count=app.liveStreamCount,
+                stream_count=stream_count,
+                live_count=live_count,
                 vod_count=app.vodCount,
                 storage_mb=round(app.storage / (1024**2), 1),
                 problematic_count=prob_count,

@@ -10,14 +10,24 @@
         activeTab: 'streams', // 'streams' | 'vod' | 'settings'
         searchQuery: '',
         vodSearchQuery: '',
+        get selectedAppSummary() {
+            const app = this.apps.find(app => app.name === this.selectedApp);
+            return {
+                stream_count: app?.stream_count ?? null,
+                live_count: app?.live_count ?? null
+            };
+        },
         
         // Applications overview
         apps: [],
         isLoadingApps: false,
+        appsUnavailable: true,
         
         // Streams data
+        allStreams: [],
         streams: [],
         isLoadingStreams: false,
+        streamsUnavailable: false,
         
         // VoD data
         vods: [],
@@ -59,6 +69,7 @@
             window.addEventListener('ams:apps-loaded', (e) => {
                 if (e.detail && e.detail.apps) {
                     this.apps = e.detail.apps;
+                    this.appsUnavailable = Boolean(e.detail.unavailable);
                     if (this.apps.length > 0 && !this.apps.some(a => a.name === this.selectedApp)) {
                         this.selectApplication(this.apps[0].name);
                     }
@@ -67,6 +78,7 @@
 
             if (window.Alpine && Alpine.store('sidebar') && Alpine.store('sidebar').apps.length > 0) {
                 this.apps = Alpine.store('sidebar').apps;
+                this.appsUnavailable = Alpine.store('sidebar').appsUnavailable;
             } else {
                 this.fetchApps();
             }
@@ -78,20 +90,33 @@
             this.isLoadingApps = true;
             try {
                 const res = await fetch('/api/applications');
-                if (res.ok) {
-                    this.apps = await res.json();
-                    if (window.Alpine && Alpine.store('sidebar')) {
-                        Alpine.store('sidebar').apps = this.apps;
-                    }
-                    if (this.apps.length > 0 && !this.apps.some(a => a.name === this.selectedApp)) {
-                        this.selectedApp = this.apps[0].name;
-                        if (window.Alpine && Alpine.store('sidebar')) {
-                            Alpine.store('sidebar').selectedApp = this.selectedApp;
-                        }
-                    }
-                    this.fetchStreams();
+                if (!res.ok) {
+                    throw new Error(`Permintaan ringkasan aplikasi gagal: HTTP ${res.status}`);
                 }
+                const apps = await res.json();
+                if (!Array.isArray(apps)) {
+                    throw new Error('Respons ringkasan aplikasi bukan berupa daftar');
+                }
+                this.apps = apps;
+                this.appsUnavailable = false;
+                if (window.Alpine && Alpine.store('sidebar')) {
+                    Alpine.store('sidebar').apps = this.apps;
+                }
+                if (this.apps.length > 0 && !this.apps.some(a => a.name === this.selectedApp)) {
+                    this.selectedApp = this.apps[0].name;
+                    if (window.Alpine && Alpine.store('sidebar')) {
+                        Alpine.store('sidebar').selectedApp = this.selectedApp;
+                    }
+                }
+                this.fetchStreams();
             } catch (err) {
+                this.appsUnavailable = true;
+                this.apps = this.apps.map(app => ({
+                    ...app,
+                    stream_count: null,
+                    live_count: null,
+                    problematic_count: null
+                }));
                 console.error('Gagal mengambil daftar aplikasi:', err);
             } finally {
                 this.isLoadingApps = false;
@@ -100,17 +125,50 @@
         
         async fetchStreams() {
             this.isLoadingStreams = true;
+            this.streamsUnavailable = false;
             try {
-                const url = `/api/applications/${encodeURIComponent(this.selectedApp)}/streams?q=${encodeURIComponent(this.searchQuery)}`;
-                const res = await fetch(url);
-                if (res.ok) {
-                    this.streams = await res.json();
+                const pageSize = 50;
+                const allStreams = [];
+                let offset = 0;
+
+                while (true) {
+                    const params = new URLSearchParams({
+                        offset: String(offset),
+                        size: String(pageSize)
+                    });
+                    const url = `/api/applications/${encodeURIComponent(this.selectedApp)}/streams?${params}`;
+                    const res = await fetch(url);
+                    if (!res.ok) {
+                        throw new Error(`Permintaan stream gagal: HTTP ${res.status}`);
+                    }
+
+                    const page = await res.json();
+                    allStreams.push(...page);
+                    if (page.length < pageSize) break;
+                    offset += page.length;
                 }
+
+                this.allStreams = allStreams;
+                this.filterStreams();
+                this.streamsUnavailable = false;
             } catch (err) {
+                this.allStreams = [];
+                this.streams = [];
+                this.streamsUnavailable = true;
                 console.error('Gagal mengambil daftar stream:', err);
             } finally {
                 this.isLoadingStreams = false;
             }
+        },
+
+        filterStreams() {
+            const query = this.searchQuery.trim().toLowerCase();
+            this.streams = query
+                ? this.allStreams.filter(stream =>
+                    (stream.name || '').toLowerCase().includes(query) ||
+                    (stream.stream_id || '').toLowerCase().includes(query)
+                )
+                : this.allStreams;
         },
 
         async fetchVods() {
@@ -456,6 +514,10 @@
             Aplikasi Aktif: <strong class="text-[var(--text-main)] uppercase" x-text="selectedApp"></strong>
         </div>
     </div>
+    <div x-show="appsUnavailable && !isLoadingApps && !$store.sidebar.isLoadingApps" x-cloak role="alert"
+        class="rounded border border-amber-300 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+        Data aplikasi tidak tersedia dari AMS. Jumlah stream ditampilkan sebagai tidak tersedia, bukan 0.
+    </div>
 
     <!-- MAIN APPLICATION DETAILS & TABS (FULL WIDTH) -->
     <div class="space-y-4">
@@ -467,7 +529,7 @@
                 <button type="button" @click="switchTab('streams')"
                     :class="activeTab === 'streams' ? 'border-[var(--accent)] text-[var(--accent-text)] border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
                     class="pb-2 text-xs transition-colors cursor-pointer focus:outline-none">
-                    Live Streams (<span x-text="streams.length"></span>)
+                    Streams (<span x-text="selectedAppSummary.stream_count ?? '—'"></span>)
                 </button>
                 <button type="button" @click="switchTab('vod')"
                     :class="activeTab === 'vod' ? 'border-[var(--accent)] text-[var(--accent-text)] border-b-2 font-semibold' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border-b-2 border-transparent'"
@@ -482,16 +544,22 @@
             </div>
 
             <!-- Search Input for Streams -->
-            <div x-show="activeTab === 'streams'" class="relative w-full sm:w-64">
-                <input type="text" x-model="searchQuery" @input.debounce.300ms="fetchStreams()"
-                    placeholder="Cari kamera atau stream..."
-                    class="h-8 w-full pl-7 pr-2.5 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] placeholder-[var(--text-subtle)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]">
-                <div
-                    class="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none text-[var(--text-muted)]">
-                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="11" cy="11" r="8" />
-                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                    </svg>
+            <div x-show="activeTab === 'streams'" class="flex w-full sm:w-auto items-center gap-3">
+                <span class="text-[11px] font-mono text-[var(--text-muted)] whitespace-nowrap">
+                    <span x-text="selectedAppSummary.stream_count ?? '—'"></span> streams ·
+                    <span x-text="selectedAppSummary.live_count ?? '—'"></span> live
+                </span>
+                <div class="relative w-full sm:w-64">
+                    <input type="text" x-model="searchQuery" @input.debounce.300ms="filterStreams()"
+                        placeholder="Cari kamera atau stream..."
+                        class="h-8 w-full pl-7 pr-2.5 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] placeholder-[var(--text-subtle)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]">
+                    <div
+                        class="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none text-[var(--text-muted)]">
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8" />
+                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                    </div>
                 </div>
             </div>
 
@@ -549,10 +617,10 @@
                         <tr>
                             <td colspan="7" class="px-4 py-12 text-center">
                                 <div class="flex flex-col items-center justify-center max-w-sm mx-auto">
-                                    <h4 class="text-xs font-semibold text-[var(--text-main)]">Tidak ada stream pada
-                                        aplikasi ini</h4>
-                                    <p class="text-[11px] text-[var(--text-muted)] mt-1">Aplikasi belum memiliki stream
-                                        CCTV atau kriteria pencarian tidak cocok.</p>
+                                    <h4 class="text-xs font-semibold text-[var(--text-main)]"
+                                        x-text="streamsUnavailable ? 'Daftar stream tidak tersedia' : 'Tidak ada stream pada aplikasi ini'"></h4>
+                                    <p class="text-[11px] text-[var(--text-muted)] mt-1"
+                                        x-text="streamsUnavailable ? 'AMS gagal mengirim daftar stream. Coba muat ulang setelah koneksi pulih.' : 'Aplikasi belum memiliki stream CCTV atau kriteria pencarian tidak cocok.'"></p>
                                 </div>
                             </td>
                         </tr>

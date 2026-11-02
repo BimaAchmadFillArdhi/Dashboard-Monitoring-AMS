@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
+from app.clients.ams_client import AMSAPIError
 from app.services.application_service import get_application_service
 
 router = APIRouter(prefix="/api/applications", tags=["Applications API"])
@@ -16,7 +17,10 @@ app_service = get_application_service()
 @router.get("")
 async def get_applications(session: AsyncSession = Depends(get_db_session)):
     """Fetch all applications with stream counts and problematic badges."""
-    return await app_service.get_applications_overview(session)
+    try:
+        return await app_service.get_applications_overview(session)
+    except AMSAPIError as err:
+        raise HTTPException(status_code=503, detail="Data aplikasi tidak tersedia dari AMS") from err
 
 
 @router.get("/{app_name}/streams")
@@ -28,13 +32,19 @@ async def get_app_streams(
     session: AsyncSession = Depends(get_db_session),
 ):
     """Fetch streams for an application with operational health status."""
-    return await app_service.get_streams_for_app(
-        app_name=app_name,
-        session=session,
-        offset=offset,
-        size=size,
-        search_q=q,
-    )
+    try:
+        return await app_service.get_streams_for_app(
+            app_name=app_name,
+            session=session,
+            offset=offset,
+            size=size,
+            search_q=q,
+        )
+    except AMSAPIError as err:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Daftar stream aplikasi {app_name} tidak tersedia dari AMS",
+        ) from err
 
 
 @router.get("/{app_name}/vods")

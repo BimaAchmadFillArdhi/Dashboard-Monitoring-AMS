@@ -24,6 +24,7 @@ Dashboard monitoring CCTV operasional untuk operator non-teknis yang terintegras
 
 3. **Applications (Read-Only)**:
    - Sidebar navigasi aplikasi (`atcs`, `atcs-kota`, `cctv-sekolah`, `live`, `WebRTCApp`, dll.) dengan badge jumlah CCTV bermasalah per aplikasi.
+   - Memuat seluruh halaman daftar stream AMS dan menampilkan total stream serta jumlah stream berstatus live per aplikasi; jika AMS gagal, jumlah ditandai tidak tersedia, bukan 0.
    - Tabel stream kamera: nama, stream ID, status operasional (Sehat, Perhatian, Bermasalah, Offline), bitrate, viewer, tanggal dibuat.
    - Drawer panel detail stream di sebelah kanan:
      - URL sumber RTSP yang **disamarkan kredensialnya secara ketat** (`rtsp://user:****@host:port/path`).
