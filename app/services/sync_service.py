@@ -15,6 +15,8 @@ from app.db.models import (
     ServerMetricHistory,
 )
 from app.services.dashboard_service import get_dashboard_service
+from app.services.log_retention import retain_status_history, retain_sync_logs
+from app.config import get_settings
 
 logger = logging.getLogger("ams.sync_service")
 
@@ -23,6 +25,7 @@ class SyncService:
     def __init__(self):
         self.ams_client = get_ams_client()
         self.dashboard_service = get_dashboard_service()
+        self.settings = get_settings()
 
     async def sync_all_applications_streams(self, session: AsyncSession) -> Dict[str, Any]:
         """
@@ -33,6 +36,7 @@ class SyncService:
         sync_start_t = time.monotonic()
         total_items_synced = 0
         apps_synced = []
+        status_groups: set[tuple[str, str]] = set()
         now_dt = datetime.utcnow()
         now_ms = int(time.time() * 1000)
 
@@ -50,6 +54,12 @@ class SyncService:
                 created_at=now_dt,
             )
             session.add(err_log)
+            await session.flush()
+            await retain_sync_logs(
+                session,
+                self.settings.LOG_RETENTION_LIMIT,
+                app_names=["ALL"],
+            )
             await session.commit()
             return {"status": "FAILED", "error": str(e), "total_synced": 0}
 
@@ -86,6 +96,7 @@ class SyncService:
                                 created_at=now_dt,
                             )
                             session.add(status_hist)
+                            status_groups.add((app_name, sid))
 
                         # Update existing entry fields
                         existing_entry.name = s.name or sid
@@ -136,6 +147,7 @@ class SyncService:
                             created_at=now_dt,
                         )
                         session.add(initial_status_hist)
+                        status_groups.add((app_name, sid))
 
                     # 4. Save telemetry point for time-series charts
                     metric = StreamMetricHistory(
@@ -182,6 +194,18 @@ class SyncService:
                 )
                 session.add(err_log)
 
+        await session.flush()
+        await retain_sync_logs(
+            session,
+            self.settings.LOG_RETENTION_LIMIT,
+            app_names=apps,
+        )
+        await retain_status_history(
+            session,
+            self.settings.LOG_RETENTION_LIMIT,
+            groups=sorted(status_groups),
+        )
+
         # Commit all updates and logs
         await session.commit()
 
@@ -192,6 +216,25 @@ class SyncService:
             "apps_synced": apps_synced,
             "duration_ms": total_dur_ms,
         }
+
+    async def cleanup_old_logs(self, session: AsyncSession) -> int:
+        """Enforce retention limits on synchronization and stream status audit logs."""
+        deleted_count = await retain_sync_logs(
+            session,
+            self.settings.LOG_RETENTION_LIMIT,
+            commit_batches=True,
+        )
+        deleted_count += await retain_status_history(
+            session,
+            self.settings.LOG_RETENTION_LIMIT,
+            commit_batches=True,
+        )
+        if deleted_count:
+            logger.info(
+                f"[SyncService] Deleted {deleted_count} excess synchronization "
+                "or stream status log rows."
+            )
+        return deleted_count
 
     async def get_sync_logs(
         self, session: AsyncSession, limit: int = 50, app_name: Optional[str] = None

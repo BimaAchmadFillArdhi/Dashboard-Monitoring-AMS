@@ -15,6 +15,7 @@ from app.api.dashboard_api import router as dashboard_api_router, dashboard_broa
 from app.api.applications_api import router as applications_api_router
 from app.services.dashboard_service import get_dashboard_service
 from app.services.application_service import get_application_service
+from app.services.sync_service import get_sync_service
 from app.clients.ams_client import get_ams_client
 from app.ingest.log_ingestor import LogIngestor
 
@@ -26,6 +27,7 @@ bg_dashboard_task: asyncio.Task | None = None
 bg_stream_metrics_task: asyncio.Task | None = None
 dashboard_svc = get_dashboard_service()
 app_svc = get_application_service()
+sync_svc = get_sync_service()
 ams_cli = get_ams_client()
 
 
@@ -72,6 +74,7 @@ async def background_log_poller():
                 now = asyncio.get_event_loop().time()
                 if now - last_cleanup_time > 86400:
                     await ingestor.cleanup_old_logs(session)
+                    await sync_svc.cleanup_old_logs(session)
                     last_cleanup_time = now
 
         except asyncio.CancelledError:

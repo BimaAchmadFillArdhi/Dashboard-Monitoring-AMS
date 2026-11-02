@@ -73,8 +73,29 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 async def init_db():
     """Create all tables and initialize schema if needed."""
     from app.db import models  # noqa: F401
+
+    def ensure_retention_indexes(sync_conn):
+        if sync_conn.dialect.name != "mysql":
+            return
+
+        from sqlalchemy import inspect
+
+        for table, index_name in (
+            (models.LogEntry.__table__, "ix_log_entries_app_stream_ts"),
+            (models.AmsSyncLog.__table__, "ix_ams_sync_logs_app_created_at"),
+        ):
+            existing_indexes = {
+                index["name"] for index in inspect(sync_conn).get_indexes(table.name)
+            }
+            if index_name not in existing_indexes:
+                index = next(
+                    item for item in table.indexes if item.name == index_name
+                )
+                index.create(bind=sync_conn)
+
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(ensure_retention_indexes)
 
 
 # Sync Engine for bulk operations / background utilities

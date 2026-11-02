@@ -70,6 +70,10 @@ def test_models_parse_from_real_samples():
     assert s0.streamId != ""
     assert s0.type == "streamSource"
     assert s0.status in ("broadcasting", "finished", "created")
+    assert s0.originAddress
+    assert s0.originAdress == s0.originAddress
+    assert s0.date > 0
+    assert "absoluteStartTimeMs" in (s0.model_extra or {})
 
     # 5. Broadcast Statistics
     with open(SAMPLES_DIR / "broadcast_total_statistics_atcs.json", "r", encoding="utf-8") as f:
@@ -119,6 +123,73 @@ def test_circuit_breaker_transitions():
     cb.record_success()
     assert cb.state == CircuitBreakerState.CLOSED
     assert cb.failure_count == 0
+
+
+@pytest.mark.asyncio
+async def test_get_all_broadcasts_paginates_until_short_page(monkeypatch):
+    client = AMSClient()
+    pages = {
+        0: [BroadcastStream(streamId="cam-1"), BroadcastStream(streamId="cam-2")],
+        2: [BroadcastStream(streamId="cam-3"), BroadcastStream(streamId="cam-4")],
+        4: [BroadcastStream(streamId="cam-5")],
+    }
+    calls = []
+
+    async def get_page(app_name, offset=0, size=50, *, strict=False):
+        calls.append((app_name, offset, size, strict))
+        return pages.get(offset, [])
+
+    monkeypatch.setattr(client, "get_broadcasts_list", get_page)
+
+    streams = await client.get_all_broadcasts("atcs", batch_size=2)
+
+    assert [stream.streamId for stream in streams] == [
+        "cam-1",
+        "cam-2",
+        "cam-3",
+        "cam-4",
+        "cam-5",
+    ]
+    assert calls == [
+        ("atcs", 0, 2, True),
+        ("atcs", 2, 2, True),
+        ("atcs", 4, 2, True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_all_broadcasts_reads_empty_page_at_exact_boundary(monkeypatch):
+    client = AMSClient()
+    calls = []
+
+    async def get_page(app_name, offset=0, size=50, *, strict=False):
+        calls.append(offset)
+        if offset < 4:
+            return [
+                BroadcastStream(streamId=f"cam-{offset + 1}"),
+                BroadcastStream(streamId=f"cam-{offset + 2}"),
+            ]
+        return []
+
+    monkeypatch.setattr(client, "get_broadcasts_list", get_page)
+
+    streams = await client.get_all_broadcasts("atcs", batch_size=2, max_pages=3)
+
+    assert len(streams) == 4
+    assert calls == [0, 2, 4]
+
+
+@pytest.mark.asyncio
+async def test_get_all_broadcasts_raises_instead_of_silently_truncating(monkeypatch):
+    client = AMSClient()
+
+    async def get_full_page(app_name, offset=0, size=50, *, strict=False):
+        return [BroadcastStream(streamId=f"cam-{offset + i}") for i in range(size)]
+
+    monkeypatch.setattr(client, "get_broadcasts_list", get_full_page)
+
+    with pytest.raises(RuntimeError, match="max_pages=1"):
+        await client.get_all_broadcasts("atcs", batch_size=2, max_pages=1)
 
 
 @pytest.mark.asyncio
@@ -177,6 +248,10 @@ async def test_live_ams_client_smoke():
         streams = await client.get_broadcasts_list("atcs", offset=0, size=5)
         assert len(streams) > 0
         assert streams[0].streamId != ""
+
+        all_broadcasts = await client.get_all_broadcasts("atcs", batch_size=50)
+        assert len(all_broadcasts) == count
+        assert len({stream.streamId for stream in all_broadcasts}) == count
 
         # VoD List
         vods = await client.get_vod_list("atcs", offset=0, size=5)

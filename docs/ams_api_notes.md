@@ -117,6 +117,15 @@ Ant Media Server berjalan di atas kontainer servlet Tomcat. Session autentikasi 
 Solusi resmi Ant Media Server adalah memanggil proxy internal:
 `GET /rest/v2/request?_path={app}/rest/v2/{sub_path}`
 
+**Jangan memanggil `/{app}/rest/v2/...` secara langsung dari dashboard.** Pada verifikasi
+endpoint broadcast, akses langsung ke `/atcs/rest/v2/broadcasts/list/0/1` menghasilkan
+HTTP 403 `Not allowed IP`, sementara panggilan melalui proxy AMS berhasil. Ini
+menunjukkan pembatasan IP berada di sisi AMS/jaringan, bukan kegagalan pagination.
+Gunakan autentikasi root AMS dan proxy tersebut; jangan mengakali pembatasan IP.
+Administrator AMS perlu mengizinkan IP egress server aplikasi (bukan setiap browser
+operator) atau menyediakan VPN/site-to-site dengan egress tetap yang aman. Gunakan
+HTTPS dan allowlist minimum; jangan membuka API untuk semua alamat.
+
 ### A. Jumlah Stream (Broadcast Count)
 - **Path**: `GET /rest/v2/request?_path={app}/rest/v2/broadcasts/count`
 - **Respons**:
@@ -143,6 +152,13 @@ Solusi resmi Ant Media Server adalah memanggil proxy internal:
   - `hlsViewerCount`, `webRTCViewerCount`, `dashViewerCount`
   - `mp4Enabled`, `webMEnabled` (integer/boolean status rekaman)
   - `autoStartStopEnabled` (boolean)
+
+Backend mengambil halaman berukuran 50 secara berurutan dengan menaikkan `offset`
+sampai AMS mengembalikan halaman kosong atau kurang dari ukuran halaman. Respons
+diparse sebagai model broadcast yang mempertahankan field AMS tambahan yang tidak
+digunakan dashboard saat ini. AMS mengirim timestamp pembuatan sebagai `date` dan
+alamat origin sebagai `originAdress` (ejaan dari AMS); model juga menerima
+`creationDate` dan `originAddress` bila tersedia dengan ejaan alternatif.
 
 ### C. Detail Satu Stream
 - **Path**: `GET /rest/v2/request?_path={app}/rest/v2/broadcasts/{streamId}`

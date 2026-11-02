@@ -4,14 +4,35 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import select
 
-from app.db.models import Base, LogEntry, UnmatchedPattern
+from app.db.models import (
+    AmsStreamCurrent,
+    AmsStreamStatusHistory,
+    AmsSyncLog,
+    Base,
+    LogEntry,
+    UnmatchedPattern,
+)
+from app.config import Settings
 from app.ingest.log_ingestor import (
+    RawLogEntry,
     parse_raw_log_content,
     extract_stream_id,
     extract_app_name,
     compute_fingerprint,
     LogIngestor,
 )
+from app.services.log_retention import retain_status_history, retain_sync_logs
+
+
+@pytest.mark.parametrize("retention_limit", ["50", "100"])
+def test_log_retention_limit_accepts_supported_environment_values(retention_limit):
+    settings = Settings(_env_file=None, LOG_RETENTION_LIMIT=retention_limit)
+    assert settings.LOG_RETENTION_LIMIT == int(retention_limit)
+
+
+def test_log_retention_limit_rejects_unsupported_value():
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, LOG_RETENTION_LIMIT="75")
 
 
 @pytest_asyncio.fixture
@@ -112,3 +133,106 @@ async def test_ingest_chunk_data(test_session):
     unmatched = up_res.scalars().all()
     assert len(unmatched) == 1
     assert "Unrecognized custom event" in unmatched[0].pattern_sample
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("retention_limit", "insert_count"), [(50, 55), (100, 105)])
+async def test_ingest_enforces_per_app_stream_retention(
+    test_session, retention_limit, insert_count
+):
+    ingestor = LogIngestor()
+    ingestor.settings.LOG_RETENTION_LIMIT = retention_limit
+    test_session.add_all(
+        [
+            AmsStreamCurrent(app_name="app-one", stream_id="camera-one", status="broadcasting"),
+            AmsStreamCurrent(app_name="app-two", stream_id="camera-two", status="broadcasting"),
+        ]
+    )
+    await test_session.commit()
+
+    entries = []
+    for stream_id in ("camera-one", "camera-two"):
+        entries.extend(
+            RawLogEntry(
+                ts=timestamp,
+                level="INFO",
+                logger="test",
+                raw_message=f"event streamId:{stream_id}",
+            )
+            for timestamp in range(insert_count)
+        )
+
+    await ingestor.ingest_chunk_data(entries, test_session)
+
+    for app_name, stream_id in (
+        ("app-one", "camera-one"),
+        ("app-two", "camera-two"),
+    ):
+        result = await test_session.execute(
+            select(LogEntry)
+            .where(LogEntry.app_name == app_name, LogEntry.stream_id == stream_id)
+            .order_by(LogEntry.ts.desc(), LogEntry.id.desc())
+        )
+        logs = result.scalars().all()
+        assert len(logs) == retention_limit
+        assert [log.ts for log in logs] == list(
+            range(insert_count - 1, insert_count - retention_limit - 1, -1)
+        )
+
+
+@pytest.mark.asyncio
+async def test_retains_sync_and_status_logs_per_identity(test_session):
+    from datetime import datetime, timedelta
+
+    sync_logs = [
+        AmsSyncLog(
+            app_name=app_name,
+            sync_type="streams",
+            status="SUCCESS",
+            items_synced=1,
+            duration_ms=1,
+            created_at=datetime(2026, 1, 1) + timedelta(seconds=index),
+        )
+        for app_name in ("app-one", "app-two")
+        for index in range(105)
+    ]
+    status_logs = [
+        AmsStreamStatusHistory(
+            app_name=app_name,
+            stream_id=stream_id,
+            old_status="finished",
+            new_status="broadcasting",
+            ts=index,
+        )
+        for app_name, stream_id in (("app-one", "camera-one"), ("app-two", "camera-two"))
+        for index in range(105)
+    ]
+    test_session.add_all(sync_logs + status_logs)
+    await test_session.flush()
+
+    assert await retain_sync_logs(test_session, 100) == 10
+    assert await retain_status_history(test_session, 100) == 10
+    await test_session.commit()
+
+    for app_name in ("app-one", "app-two"):
+        result = await test_session.execute(
+            select(AmsSyncLog)
+            .where(AmsSyncLog.app_name == app_name)
+            .order_by(AmsSyncLog.created_at.desc(), AmsSyncLog.id.desc())
+        )
+        rows = result.scalars().all()
+        assert len(rows) == 100
+        assert rows[0].created_at == datetime(2026, 1, 1) + timedelta(seconds=104)
+
+    for app_name, stream_id in (("app-one", "camera-one"), ("app-two", "camera-two")):
+        result = await test_session.execute(
+            select(AmsStreamStatusHistory)
+            .where(
+                AmsStreamStatusHistory.app_name == app_name,
+                AmsStreamStatusHistory.stream_id == stream_id,
+            )
+            .order_by(AmsStreamStatusHistory.ts.desc(), AmsStreamStatusHistory.id.desc())
+        )
+        rows = result.scalars().all()
+        assert len(rows) == 100
+        assert rows[0].ts == 104

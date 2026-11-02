@@ -314,45 +314,66 @@ class AMSClient:
         return 0
 
     async def get_broadcasts_list(
-        self, app_name: str, offset: int = 0, size: int = 50
+        self,
+        app_name: str,
+        offset: int = 0,
+        size: int = 50,
+        *,
+        strict: bool = False,
     ) -> List[BroadcastStream]:
+        if offset < 0 or size < 1:
+            raise ValueError("Broadcast pagination requires offset >= 0 and size >= 1")
+
         resp = await self.proxy_request(f"{app_name}/rest/v2/broadcasts/list/{offset}/{size}")
         if resp:
             data = resp.json()
             if isinstance(data, list):
                 return [BroadcastStream(**item) for item in data]
+            if strict:
+                raise ValueError(
+                    f"AMS broadcast list for {app_name} returned a non-list response"
+                )
+        elif strict:
+            raise RuntimeError(
+                f"Unable to fetch AMS broadcasts for {app_name} at offset {offset}"
+            )
         return []
 
     async def get_all_broadcasts(
         self, app_name: str, batch_size: int = 50, max_pages: int = 100
     ) -> List[BroadcastStream]:
-        """Fetch ALL broadcasts for an application using pagination loop until exhausted."""
-        total_count = await self.get_broadcasts_count(app_name)
+        """Fetch all broadcasts until AMS returns an empty or partial page."""
+        if batch_size < 1 or max_pages < 1:
+            raise ValueError("batch_size and max_pages must be at least 1")
+
         all_streams: List[BroadcastStream] = []
         offset = 0
         seen_ids = set()
 
-        for _ in range(max_pages):
-            batch = await self.get_broadcasts_list(app_name, offset=offset, size=batch_size)
+        for page_number in range(max_pages):
+            batch = await self.get_broadcasts_list(
+                app_name,
+                offset=offset,
+                size=batch_size,
+                strict=True,
+            )
             if not batch:
-                break
+                return all_streams
 
-            new_items_found = False
             for s in batch:
                 if s.streamId and s.streamId not in seen_ids:
                     seen_ids.add(s.streamId)
                     all_streams.append(s)
-                    new_items_found = True
 
-            # If no new items found or returned less than batch_size, stop
-            if not new_items_found or len(batch) < batch_size:
-                break
+            if len(batch) < batch_size:
+                return all_streams
 
             offset += len(batch)
-            if total_count > 0 and offset >= total_count:
-                break
 
-        return all_streams
+        raise RuntimeError(
+            f"AMS broadcast pagination for {app_name} reached max_pages={max_pages} "
+            f"without an empty or partial page (next offset={offset})"
+        )
 
     async def get_all_vods(
         self, app_name: str, batch_size: int = 50, max_pages: int = 100
