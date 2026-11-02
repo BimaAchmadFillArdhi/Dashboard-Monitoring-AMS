@@ -169,7 +169,7 @@ class LogIngestor:
     async def ingest_chunk_data(
         self, entries: List[RawLogEntry], session: AsyncSession
     ) -> int:
-        """Translate parsed entries and batch insert into SQLite database."""
+        """Translate parsed entries and batch insert into the configured database."""
         if not entries:
             return 0
 
@@ -180,7 +180,15 @@ class LogIngestor:
         from app.db.models import AmsStreamCurrent
         stmt_map = select(AmsStreamCurrent.stream_id, AmsStreamCurrent.app_name)
         res_map = await session.execute(stmt_map)
-        stream_map = dict(res_map.all())
+        stream_owners: Dict[str, set[str]] = {}
+        for stream_id, app_name in res_map.all():
+            if stream_id and app_name:
+                stream_owners.setdefault(stream_id, set()).add(app_name)
+        stream_map = {
+            stream_id: next(iter(app_names))
+            for stream_id, app_names in stream_owners.items()
+            if len(app_names) == 1
+        }
 
         for e in entries:
             stream_id = extract_stream_id(e.raw_message)

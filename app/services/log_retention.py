@@ -70,12 +70,10 @@ async def retain_log_entries(
 
     deleted_count = 0
     for app_name, stream_id in groups:
-        if not stream_id:
+        if app_name is None or not stream_id:
             continue
         conditions = [
-            LogEntry.app_name.is_(None)
-            if app_name is None
-            else LogEntry.app_name == app_name,
+            LogEntry.app_name == app_name,
             LogEntry.stream_id == stream_id,
         ]
         deleted_count += await _trim_group(

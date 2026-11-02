@@ -140,7 +140,7 @@ async def background_dashboard_ticker():
 
 
 async def background_stream_metrics_collector():
-    """Background task polling all AMS stream metrics every 5s and persisting to SQLite."""
+    """Background task polling all AMS stream metrics and persisting to the configured database."""
     await asyncio.sleep(2.0)
     interval = settings.STREAM_METRICS_INTERVAL_SECONDS
     logger.info(f"[StreamCollector] Started background stream metrics collector loop ({interval}s interval)")

@@ -1,3 +1,4 @@
+import asyncio
 import time
 import logging
 from datetime import datetime
@@ -26,8 +27,16 @@ class SyncService:
         self.ams_client = get_ams_client()
         self.dashboard_service = get_dashboard_service()
         self.settings = get_settings()
+        self._sync_lock = asyncio.Lock()
 
     async def sync_all_applications_streams(self, session: AsyncSession) -> Dict[str, Any]:
+        """Serialize full snapshots so scheduled and manual syncs cannot race."""
+        async with self._sync_lock:
+            return await self._sync_all_applications_streams(session)
+
+    async def _sync_all_applications_streams(
+        self, session: AsyncSession
+    ) -> Dict[str, Any]:
         """
         Synchronize all streams from all applications using full pagination.
         Saves current state, detects status transitions, logs historical telemetry,
@@ -41,7 +50,11 @@ class SyncService:
         now_ms = int(time.time() * 1000)
 
         try:
-            apps = await self.ams_client.get_applications()
+            apps = await self.ams_client.get_applications(strict=True)
+            if not apps:
+                raise RuntimeError(
+                    "AMS returned an empty application list; preserving the last snapshot"
+                )
         except Exception as e:
             logger.error(f"[SyncService] Failed to retrieve applications from AMS: {e}")
             err_log = AmsSyncLog(
@@ -67,7 +80,15 @@ class SyncService:
             app_start_t = time.monotonic()
             try:
                 # 1. Fetch all broadcasts using pagination loop
+                expected_count = await self.ams_client.get_broadcasts_count(
+                    app_name, strict=True
+                )
                 streams = await self.ams_client.get_all_broadcasts(app_name, batch_size=50)
+                if len(streams) != expected_count:
+                    raise RuntimeError(
+                        f"AMS returned {len(streams)} broadcasts for {app_name}, "
+                        f"but its count endpoint reports {expected_count}"
+                    )
 
                 # 2. Query existing streams for this app to detect status changes
                 stmt = select(AmsStreamCurrent).where(AmsStreamCurrent.app_name == app_name)
@@ -210,10 +231,12 @@ class SyncService:
         await session.commit()
 
         total_dur_ms = int((time.monotonic() - sync_start_t) * 1000)
+        failed_apps = [app_name for app_name in apps if app_name not in apps_synced]
         return {
-            "status": "SUCCESS",
+            "status": "SUCCESS" if not failed_apps else "WARNING",
             "total_synced": total_items_synced,
             "apps_synced": apps_synced,
+            "apps_failed": failed_apps,
             "duration_ms": total_dur_ms,
         }
 

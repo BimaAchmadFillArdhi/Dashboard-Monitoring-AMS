@@ -1,6 +1,7 @@
 import time
 import asyncio
 import collections
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Deque
 from pydantic import BaseModel
@@ -10,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clients.ams_client import get_ams_client
 from app.clients.models import SystemResources, ApplicationItem
 from app.db.models import ServerMetricHistory
+
+logger = logging.getLogger("ams.dashboard_service")
 
 
 class MetricPoint(BaseModel):
@@ -253,16 +256,33 @@ class DashboardService:
 
             try:
                 resources = await self.ams_client.get_system_resources()
-                apps_info = await self.ams_client.get_applications_info()
                 connected = resources is not None
             except Exception:
                 connected = False
+
+            if connected:
+                try:
+                    apps_info = await self.ams_client.get_applications_info(
+                        strict=True
+                    )
+                except Exception as err:
+                    logger.warning(
+                        "[DashboardService] Unable to refresh application counts: %s",
+                        err,
+                    )
 
             now = datetime.now()
             time_label = now.strftime("%H:%M:%S")
 
             if not connected or resources is None:
-                # Return cached or default snapshot with ams_connected=False
+                if self._last_snapshot:
+                    return self._last_snapshot.model_copy(
+                        update={
+                            "ams_connected": False,
+                            "server_time": time_label,
+                            "history": self.get_history(),
+                        }
+                    )
                 history = self.get_history()
                 return DashboardSnapshot(
                     ams_connected=False,
@@ -294,9 +314,26 @@ class DashboardService:
             disk_pct = fs.usage_percent if fs else 0.0
 
             # 4. Parse Streams and Viewers
-            total_live = 0
-            for app in apps_info:
-                total_live += app.liveStreamCount
+            use_cached_applications = (
+                not apps_info
+                and self._last_snapshot is not None
+                and bool(self._last_snapshot.applications)
+            )
+            if use_cached_applications:
+                applications = self._last_snapshot.applications
+                total_live = self._last_snapshot.total_live_streams
+            else:
+                total_live = sum(app.liveStreamCount for app in apps_info)
+                applications = []
+                for app in apps_info:
+                    storage_mb = round(app.storage / (1024**2), 1)
+                    applications.append({
+                        "name": app.name,
+                        "live_count": app.liveStreamCount,
+                        "vod_count": app.vodCount,
+                        "storage_mb": storage_mb,
+                        "status": "Aktif" if app.liveStreamCount > 0 else "Siap",
+                    })
 
             hls_v = max(0, resources.localHLSViewers or 0)
             webrtc_v = max(0, resources.localWebRTCViewers or 0)
@@ -313,18 +350,6 @@ class DashboardService:
             os_a = resources.systemStatus.osArch if resources.systemStatus else "amd64"
             java_v = resources.systemStatus.javaVersion if resources.systemStatus else "21"
             proc_cnt = resources.systemStatus.processorCount if resources.systemStatus else 1
-
-            # 6. Applications summary table data
-            apps_list = []
-            for app in apps_info:
-                storage_mb = round(app.storage / (1024**2), 1)
-                apps_list.append({
-                    "name": app.name,
-                    "live_count": app.liveStreamCount,
-                    "vod_count": app.vodCount,
-                    "storage_mb": storage_mb,
-                    "status": "Aktif" if app.liveStreamCount > 0 else "Siap",
-                })
 
             # Update rolling ring buffer
             self._timestamps.append(time_label)
@@ -365,7 +390,7 @@ class DashboardService:
                 hls_viewers=hls_v,
                 dash_viewers=dash_v,
                 db_query_avg_ms=db_ms,
-                applications=apps_list,
+                applications=applications,
                 history=self.get_history(),
             )
             self._last_snapshot = snapshot

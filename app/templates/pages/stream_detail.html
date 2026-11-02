@@ -15,9 +15,6 @@
         historyHours: 1,
         isLoadingHistory: false,
         historyData: null,
-        chartBitrate: null,
-        chartSpeed: null,
-        chartViewers: null,
         sseSource: null,
         lastUpdatedTime: '-',
 
@@ -64,6 +61,11 @@
                     const data = await res.json();
                     this.historyData = data;
                     this.applyHistory(data);
+                    if (this.sseSource) {
+                        this.sseSource.close();
+                        this.sseSource = null;
+                        this.connectSSE();
+                    }
                 }
             } catch (err) {
                 console.error('Error fetching stream history:', err);
@@ -76,28 +78,29 @@
             if (!data) return;
             this.historyData = data;
             const labels = data.timestamps || [];
+            const charts = this.$el._streamCharts;
 
             // 1. Bitrate Chart
-            if (this.chartBitrate) {
-                this.chartBitrate.data.labels = [...labels];
-                this.chartBitrate.data.datasets[0].data = [...(data.bitrate_mbps || [])];
-                this.chartBitrate.update();
+            if (charts?.bitrate) {
+                charts.bitrate.data.labels = [...labels];
+                charts.bitrate.data.datasets[0].data = [...(data.bitrate_mbps || [])];
+                charts.bitrate.update('none');
             }
 
             // 2. Speed Chart (dengan garis referensi ideal 1.0x dan sanitasi anomali DTS)
-            if (this.chartSpeed) {
-                this.chartSpeed.data.labels = [...labels];
+            if (charts?.speed) {
+                charts.speed.data.labels = [...labels];
                 const cleanSpeed = data.speed_filtered || (data.speed || []).map(v => (v < 0 ? 0.0 : Math.min(v, 3.0)));
-                this.chartSpeed.data.datasets[0].data = [...cleanSpeed];
-                this.chartSpeed.data.datasets[1].data = labels.map(() => 1.0);
-                this.chartSpeed.update();
+                charts.speed.data.datasets[0].data = [...cleanSpeed];
+                charts.speed.data.datasets[1].data = labels.map(() => 1.0);
+                charts.speed.update('none');
             }
 
             // 3. Viewers Chart (Bilangan bulat)
-            if (this.chartViewers) {
-                this.chartViewers.data.labels = [...labels];
-                this.chartViewers.data.datasets[0].data = [...(data.viewers || [])];
-                this.chartViewers.update();
+            if (charts?.viewers) {
+                charts.viewers.data.labels = [...labels];
+                charts.viewers.data.datasets[0].data = [...(data.viewers || [])];
+                charts.viewers.update('none');
             }
         },
 
@@ -115,6 +118,11 @@
                 setTimeout(() => this.initCharts(), 80);
                 return;
             }
+            const charts = this.$el._streamCharts || (this.$el._streamCharts = {
+                bitrate: null,
+                speed: null,
+                viewers: null,
+            });
 
             const baseOptions = {
                 responsive: true,
@@ -157,8 +165,8 @@
 
             // 1. Bitrate Chart (Mbps)
             const ctxBitrate = canvasBitrate.getContext('2d');
-            if (ctxBitrate && !this.chartBitrate) {
-                this.chartBitrate = new Chart(ctxBitrate, {
+            if (ctxBitrate && !charts.bitrate) {
+                charts.bitrate = new Chart(ctxBitrate, {
                     type: 'line',
                     data: {
                         labels: [],
@@ -188,8 +196,8 @@
 
             // 2. Speed Chart dengan Garis Referensi Ideal 1.0x
             const ctxSpeed = canvasSpeed.getContext('2d');
-            if (ctxSpeed && !this.chartSpeed) {
-                this.chartSpeed = new Chart(ctxSpeed, {
+            if (ctxSpeed && !charts.speed) {
+                charts.speed = new Chart(ctxSpeed, {
                     type: 'line',
                     data: {
                         labels: [],
@@ -242,8 +250,8 @@
 
             // 3. Viewers Chart (Bilangan bulat)
             const ctxViewers = canvasViewers.getContext('2d');
-            if (ctxViewers && !this.chartViewers) {
-                this.chartViewers = new Chart(ctxViewers, {
+            if (ctxViewers && !charts.viewers) {
+                charts.viewers = new Chart(ctxViewers, {
                     type: 'line',
                     data: {
                         labels: [],
@@ -280,7 +288,7 @@
 
         connectSSE() {
             if (this.sseSource) return;
-            const url = `/api/applications/${encodeURIComponent(this.appName)}/streams/${encodeURIComponent(this.streamId)}/live-sse`;
+            const url = `/api/applications/${encodeURIComponent(this.appName)}/streams/${encodeURIComponent(this.streamId)}/live-sse?hours=${this.historyHours}`;
             this.sseSource = new EventSource(url);
 
             this.sseSource.onmessage = (event) => {
@@ -301,45 +309,7 @@
                     this.stream.health_tone = update.health_tone;
                     this.lastUpdatedTime = new Date().toLocaleTimeString('id-ID');
 
-                    const ts = update.timestamp || new Date().toLocaleTimeString('id-ID', { hour12: false });
-                    const maxLivePoints = 60;
-
-                    // Update Bitrate Chart
-                    if (this.chartBitrate) {
-                        this.chartBitrate.data.labels.push(ts);
-                        this.chartBitrate.data.datasets[0].data.push(this.stream.bitrate_mbps);
-                        if (this.chartBitrate.data.labels.length > maxLivePoints) {
-                            this.chartBitrate.data.labels.shift();
-                            this.chartBitrate.data.datasets[0].data.shift();
-                        }
-                        this.chartBitrate.update('none');
-                    }
-
-                    // Update Speed Chart
-                    if (this.chartSpeed) {
-                        this.chartSpeed.data.labels.push(ts);
-                        const rawS = this.stream.speed ?? 0;
-                        const sFilt = rawS < 0 ? 0.0 : Math.min(rawS, 3.0);
-                        this.chartSpeed.data.datasets[0].data.push(sFilt);
-                        this.chartSpeed.data.datasets[1].data.push(1.0);
-                        if (this.chartSpeed.data.labels.length > maxLivePoints) {
-                            this.chartSpeed.data.labels.shift();
-                            this.chartSpeed.data.datasets[0].data.shift();
-                            this.chartSpeed.data.datasets[1].data.shift();
-                        }
-                        this.chartSpeed.update('none');
-                    }
-
-                    // Update Viewers Chart
-                    if (this.chartViewers) {
-                        this.chartViewers.data.labels.push(ts);
-                        this.chartViewers.data.datasets[0].data.push(this.stream.total_viewers);
-                        if (this.chartViewers.data.labels.length > maxLivePoints) {
-                            this.chartViewers.data.labels.shift();
-                            this.chartViewers.data.datasets[0].data.shift();
-                        }
-                        this.chartViewers.update('none');
-                    }
+                    this.applyHistory(update.history);
                 } catch (e) {
                     console.error('SSE parsing error:', e);
                 }
@@ -358,9 +328,10 @@
             this.activeChartTab = tab;
             this.$nextTick(() => {
                 setTimeout(() => {
-                    if (this.chartBitrate) { this.chartBitrate.resize(); this.chartBitrate.update(); }
-                    if (this.chartSpeed) { this.chartSpeed.resize(); this.chartSpeed.update(); }
-                    if (this.chartViewers) { this.chartViewers.resize(); this.chartViewers.update(); }
+                    const charts = this.$el._streamCharts;
+                    if (charts?.bitrate) { charts.bitrate.resize(); charts.bitrate.update(); }
+                    if (charts?.speed) { charts.speed.resize(); charts.speed.update(); }
+                    if (charts?.viewers) { charts.viewers.resize(); charts.viewers.update(); }
                 }, 50);
             });
         }

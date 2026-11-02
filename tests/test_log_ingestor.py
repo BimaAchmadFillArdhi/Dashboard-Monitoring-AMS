@@ -21,7 +21,11 @@ from app.ingest.log_ingestor import (
     compute_fingerprint,
     LogIngestor,
 )
-from app.services.log_retention import retain_status_history, retain_sync_logs
+from app.services.log_retention import (
+    retain_log_entries,
+    retain_status_history,
+    retain_sync_logs,
+)
 
 
 @pytest.mark.parametrize("retention_limit", ["50", "100"])
@@ -178,6 +182,75 @@ async def test_ingest_enforces_per_app_stream_retention(
         assert [log.ts for log in logs] == list(
             range(insert_count - 1, insert_count - retention_limit - 1, -1)
         )
+
+
+@pytest.mark.asyncio
+async def test_log_retention_keeps_same_stream_id_separate_by_application(test_session):
+    entries = [
+        LogEntry(
+            ts=timestamp,
+            level="INFO",
+            raw_message="camera event",
+            app_name=app_name,
+            stream_id="shared-camera",
+            severity_group="info",
+            fingerprint=f"{app_name}-{timestamp}",
+        )
+        for app_name in ("app-one", "app-two")
+        for timestamp in range(105)
+    ]
+    test_session.add_all(entries)
+    await test_session.flush()
+
+    deleted = await retain_log_entries(test_session, 100)
+    await test_session.commit()
+
+    assert deleted == 10
+    for app_name in ("app-one", "app-two"):
+        result = await test_session.execute(
+            select(LogEntry)
+            .where(
+                LogEntry.app_name == app_name,
+                LogEntry.stream_id == "shared-camera",
+            )
+            .order_by(LogEntry.ts.desc(), LogEntry.id.desc())
+        )
+        logs = result.scalars().all()
+        assert len(logs) == 100
+        assert logs[0].ts == 104
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_stream_id_is_not_assigned_to_an_arbitrary_app(test_session):
+    ingestor = LogIngestor()
+    test_session.add_all(
+        [
+            AmsStreamCurrent(
+                app_name=app_name,
+                stream_id="shared-camera",
+                status="broadcasting",
+            )
+            for app_name in ("app-one", "app-two")
+        ]
+    )
+    await test_session.commit()
+
+    await ingestor.ingest_chunk_data(
+        [
+            RawLogEntry(
+                ts=1,
+                level="INFO",
+                logger="test",
+                raw_message="event streamId:shared-camera",
+            )
+        ],
+        test_session,
+    )
+
+    result = await test_session.execute(select(LogEntry))
+    log = result.scalar_one()
+    assert log.stream_id == "shared-camera"
+    assert log.app_name is None
 
 
 @pytest.mark.asyncio

@@ -32,9 +32,6 @@
         isLoadingStreamHistory: false,
 
         // Charts
-        chartBitrate: null,
-        chartSpeed: null,
-        chartViewers: null,
         
         init() {
             // Check query param for initial app or take from store
@@ -182,17 +179,18 @@
         },
 
         destroyStreamCharts() {
-            if (this.chartBitrate) {
-                try { this.chartBitrate.destroy(); } catch (e) {}
-                this.chartBitrate = null;
+            const charts = this.$el._streamCharts;
+            if (charts?.bitrate) {
+                charts.bitrate.destroy();
+                charts.bitrate = null;
             }
-            if (this.chartSpeed) {
-                try { this.chartSpeed.destroy(); } catch (e) {}
-                this.chartSpeed = null;
+            if (charts?.speed) {
+                charts.speed.destroy();
+                charts.speed = null;
             }
-            if (this.chartViewers) {
-                try { this.chartViewers.destroy(); } catch (e) {}
-                this.chartViewers = null;
+            if (charts?.viewers) {
+                charts.viewers.destroy();
+                charts.viewers = null;
             }
         },
 
@@ -205,6 +203,10 @@
                 if (res.ok) {
                     const data = await res.json();
                     this.applyStreamHistory(data);
+                    if (this.drawerSseSource) {
+                        this.drawerSseSource.close();
+                        this.startDrawerSSE(streamId);
+                    }
                 }
             } catch (err) {
                 console.error('Gagal memuat riwayat stream:', err);
@@ -217,21 +219,22 @@
             if (!data) return;
             this._lastStreamHistory = data;
             const labels = data.timestamps || [];
+            const charts = this.$el._streamCharts;
 
-            if (this.chartBitrate) {
-                this.chartBitrate.data.labels = [...labels];
-                this.chartBitrate.data.datasets[0].data = [...(data.bitrate_mbps || [])];
-                this.chartBitrate.update('none');
+            if (charts?.bitrate) {
+                charts.bitrate.data.labels = [...labels];
+                charts.bitrate.data.datasets[0].data = [...(data.bitrate_mbps || [])];
+                charts.bitrate.update('none');
             }
-            if (this.chartSpeed) {
-                this.chartSpeed.data.labels = [...labels];
-                this.chartSpeed.data.datasets[0].data = [...(data.speed || [])];
-                this.chartSpeed.update('none');
+            if (charts?.speed) {
+                charts.speed.data.labels = [...labels];
+                charts.speed.data.datasets[0].data = [...(data.speed_filtered || data.speed || [])];
+                charts.speed.update('none');
             }
-            if (this.chartViewers) {
-                this.chartViewers.data.labels = [...labels];
-                this.chartViewers.data.datasets[0].data = [...(data.viewers || [])];
-                this.chartViewers.update('none');
+            if (charts?.viewers) {
+                charts.viewers.data.labels = [...labels];
+                charts.viewers.data.datasets[0].data = [...(data.viewers || [])];
+                charts.viewers.update('none');
             }
         },
 
@@ -246,6 +249,11 @@
                 setTimeout(() => this.initStreamCharts(), 80);
                 return;
             }
+            const charts = this.$el._streamCharts || (this.$el._streamCharts = {
+                bitrate: null,
+                speed: null,
+                viewers: null,
+            });
 
             const chartBaseOpts = {
                 responsive: true,
@@ -288,8 +296,8 @@
 
             // 1. Bitrate Chart (Mbps)
             const ctxBitrate = canvasBitrate.getContext('2d');
-            if (ctxBitrate && !this.chartBitrate) {
-                this.chartBitrate = new Chart(ctxBitrate, {
+            if (ctxBitrate && !charts.bitrate) {
+                charts.bitrate = new Chart(ctxBitrate, {
                     type: 'line',
                     data: {
                         labels: [],
@@ -319,8 +327,8 @@
 
             // 2. Speed Chart
             const ctxSpeed = document.getElementById('chart-stream-speed')?.getContext('2d');
-            if (ctxSpeed && !this.chartSpeed) {
-                this.chartSpeed = new Chart(ctxSpeed, {
+            if (ctxSpeed && !charts.speed) {
+                charts.speed = new Chart(ctxSpeed, {
                     type: 'line',
                     data: {
                         labels: [],
@@ -350,8 +358,8 @@
 
             // 3. Viewers Chart
             const ctxViewers = document.getElementById('chart-stream-viewers')?.getContext('2d');
-            if (ctxViewers && !this.chartViewers) {
-                this.chartViewers = new Chart(ctxViewers, {
+            if (ctxViewers && !charts.viewers) {
+                charts.viewers = new Chart(ctxViewers, {
                     type: 'line',
                     data: {
                         labels: [],
@@ -386,7 +394,7 @@
         },
 
         startDrawerSSE(streamId) {
-            const url = `/api/applications/${encodeURIComponent(this.selectedApp)}/streams/${encodeURIComponent(streamId)}/live-sse`;
+            const url = `/api/applications/${encodeURIComponent(this.selectedApp)}/streams/${encodeURIComponent(streamId)}/live-sse?hours=${this.streamHistoryHours}`;
             this.drawerSseSource = new EventSource(url);
             this.drawerSseSource.onmessage = (event) => {
                 if (!this.isDrawerOpen || !this.selectedStream) return;
@@ -404,41 +412,7 @@
                     this.selectedStream.health_status = update.health_status;
                     this.selectedStream.health_tone = update.health_tone;
 
-                    const ts = update.timestamp || new Date().toLocaleTimeString('id-ID', { hour12: false });
-                    const maxLivePoints = 30;
-
-                    // Append real-time point to Bitrate chart
-                    if (this.chartBitrate) {
-                        this.chartBitrate.data.labels.push(ts);
-                        this.chartBitrate.data.datasets[0].data.push(this.selectedStream.bitrate_mbps);
-                        if (this.chartBitrate.data.labels.length > maxLivePoints) {
-                            this.chartBitrate.data.labels.shift();
-                            this.chartBitrate.data.datasets[0].data.shift();
-                        }
-                        this.chartBitrate.update('none');
-                    }
-
-                    // Append real-time point to Speed chart
-                    if (this.chartSpeed) {
-                        this.chartSpeed.data.labels.push(ts);
-                        this.chartSpeed.data.datasets[0].data.push(this.selectedStream.speed);
-                        if (this.chartSpeed.data.labels.length > maxLivePoints) {
-                            this.chartSpeed.data.labels.shift();
-                            this.chartSpeed.data.datasets[0].data.shift();
-                        }
-                        this.chartSpeed.update('none');
-                    }
-
-                    // Append real-time point to Viewers chart
-                    if (this.chartViewers) {
-                        this.chartViewers.data.labels.push(ts);
-                        this.chartViewers.data.datasets[0].data.push(this.selectedStream.total_viewers);
-                        if (this.chartViewers.data.labels.length > maxLivePoints) {
-                            this.chartViewers.data.labels.shift();
-                            this.chartViewers.data.datasets[0].data.shift();
-                        }
-                        this.chartViewers.update('none');
-                    }
+                    this.applyStreamHistory(update.history);
                 } catch (e) {}
             };
         }
@@ -996,7 +970,7 @@
 
                                 <div
                                     class="text-[10px] text-[var(--text-subtle)] font-mono text-right pt-1 border-t border-[var(--border-color)]">
-                                    Pembaruan otomatis tiap 2 detik via SSE &bull; Disimpan ke SQLite
+                                    Pembaruan otomatis tiap 2 detik via SSE &bull; Disimpan ke MySQL
                                 </div>
                             </div>
 

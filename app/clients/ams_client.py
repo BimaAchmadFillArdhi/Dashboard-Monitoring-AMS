@@ -291,26 +291,50 @@ class AMSClient:
 
         return resources
 
-    async def get_applications(self) -> List[str]:
+    async def get_applications(self, *, strict: bool = False) -> List[str]:
         resp = await self.request("GET", "/rest/v2/applications")
         if resp:
             data = resp.json()
-            return data.get("applications", [])
+            applications = data.get("applications") if isinstance(data, dict) else None
+            if isinstance(applications, list) and all(
+                isinstance(app_name, str) and app_name for app_name in applications
+            ):
+                return applications
+            if strict:
+                raise ValueError("AMS returned an invalid applications response")
+        elif strict:
+            raise RuntimeError("Unable to fetch AMS application list")
         return []
 
-    async def get_applications_info(self) -> List[ApplicationItem]:
+    async def get_applications_info(self, *, strict: bool = False) -> List[ApplicationItem]:
         resp = await self.request("GET", "/rest/v2/applications-info")
         if resp:
             data = resp.json()
             if isinstance(data, list):
-                return [ApplicationItem(**item) for item in data]
+                try:
+                    return [ApplicationItem(**item) for item in data]
+                except Exception as err:
+                    if strict:
+                        raise ValueError("AMS returned invalid application metadata") from err
+            elif strict:
+                raise ValueError("AMS returned an invalid applications-info response")
+        elif strict:
+            raise RuntimeError("Unable to fetch AMS application metadata")
         return []
 
-    async def get_broadcasts_count(self, app_name: str) -> int:
+    async def get_broadcasts_count(self, app_name: str, *, strict: bool = False) -> int:
         resp = await self.proxy_request(f"{app_name}/rest/v2/broadcasts/count")
         if resp:
             data = resp.json()
-            return data.get("number", 0)
+            number = data.get("number") if isinstance(data, dict) else None
+            if isinstance(number, int) and number >= 0:
+                return number
+            if strict:
+                raise ValueError(
+                    f"AMS returned an invalid broadcast count for {app_name}"
+                )
+        elif strict:
+            raise RuntimeError(f"Unable to fetch AMS broadcast count for {app_name}")
         return 0
 
     async def get_broadcasts_list(

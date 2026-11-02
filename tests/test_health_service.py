@@ -58,6 +58,7 @@ async def test_evaluate_health_problematic(test_session):
             friendly_message=f"Video dari kamera {cam_id} tidak bisa disimpan.",
             severity_group="masalah",
             fingerprint="fp1",
+            app_name="atcs",
         )
         for i in range(6)
     ]
@@ -69,6 +70,42 @@ async def test_evaluate_health_problematic(test_session):
     assert report.tone == "danger"
     assert report.warns_5m == 6
     assert "Video dari kamera" in report.problem_summary
+
+
+@pytest.mark.asyncio
+async def test_health_logs_are_scoped_to_application(test_session):
+    svc = HealthService(warn_threshold_5m=2)
+    now_ms = int(time.time() * 1000)
+    test_session.add_all(
+        [
+            LogEntry(
+                ts=now_ms - index,
+                level="WARN",
+                raw_message="warning from another app",
+                app_name="cctv-sleman",
+                stream_id="shared-camera-id",
+                friendly_title="Warning",
+                friendly_message="Warning",
+                severity_group="perhatian",
+                fingerprint=f"other-{index}",
+            )
+            for index in range(3)
+        ]
+    )
+    await test_session.commit()
+
+    report = await svc.evaluate_stream_health(
+        BroadcastStream(
+            streamId="shared-camera-id",
+            status="broadcasting",
+            bitrate=1_000_000,
+        ),
+        "cctv-bantul",
+        test_session,
+    )
+
+    assert report.status == "Sehat"
+    assert report.warns_5m == 0
 
 
 @pytest.mark.asyncio
@@ -93,6 +130,7 @@ async def test_rank_problematic_streams(test_session):
             friendly_message="Warn Msg",
             severity_group="masalah",
             fingerprint="fp2",
+            app_name="atcs",
         )
         for i in range(6)
     ]
@@ -106,6 +144,7 @@ async def test_rank_problematic_streams(test_session):
             friendly_message="Minor Msg",
             severity_group="perhatian",
             fingerprint="fp3",
+            app_name="atcs",
         )
     )
     test_session.add_all(logs)

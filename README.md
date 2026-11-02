@@ -122,7 +122,7 @@ Variabel penting:
 - `AMS_PASSWORD`: Password user AMS (contoh: `wiko2026`)
 - `POLL_INTERVAL_SECONDS`: Frekuensi background ingest log (default: `5`)
 - `LOG_RETENTION_DAYS`: Durasi retensi histori log sebelum dibersihkan (default: `30`)
-- `LOG_RETENTION_LIMIT`: Maksimal log terbaru per aplikasi dan stream (`log_entries` serta riwayat perubahan status), dan per aplikasi untuk log sinkronisasi; pilih `50` atau `100` (default: `100`). Pembersihan dilakukan saat log baru disimpan dan pada cleanup harian.
+- `LOG_RETENTION_LIMIT`: Maksimal log terbaru per aplikasi dan stream (`log_entries` serta riwayat perubahan status), dan per aplikasi untuk log sinkronisasi; pilih `50` atau `100` (default: `100`). Pembersihan dilakukan saat log baru disimpan dan pada cleanup harian. Log yang aplikasinya tidak dapat diidentifikasi tidak digabungkan untuk retensi stream, agar ID kamera yang sama pada aplikasi berbeda tidak saling menghapus.
 
 ### 4. Menjalankan Server
 ```bash
