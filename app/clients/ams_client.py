@@ -337,8 +337,16 @@ class AMSClient:
         return data["number"]
 
     async def get_broadcasts_list(
-        self, app_name: str, offset: int = 0, size: int = 50
+        self,
+        app_name: str,
+        offset: int = 0,
+        size: int = 50,
+        *,
+        strict: bool = False,
     ) -> List[BroadcastStream]:
+        if offset < 0 or size < 1:
+            raise ValueError("Broadcast pagination requires offset >= 0 and size >= 1")
+
         resp = await self.proxy_request(f"{app_name}/rest/v2/broadcasts/list/{offset}/{size}")
         if resp is None:
             raise AMSAPIError(f"AMS stream list request failed for {app_name} at offset {offset}")
@@ -361,13 +369,21 @@ class AMSClient:
     async def get_all_broadcasts(
         self, app_name: str, batch_size: int = 50, max_pages: int = 100
     ) -> List[BroadcastStream]:
-        """Fetch ALL broadcasts for an application using pagination loop until exhausted."""
+        """Fetch all broadcasts until AMS returns an empty or partial page."""
+        if batch_size < 1 or max_pages < 1:
+            raise ValueError("batch_size and max_pages must be at least 1")
+
         all_streams: List[BroadcastStream] = []
         offset = 0
         seen_ids = set()
 
         for _ in range(max_pages):
-            batch = await self.get_broadcasts_list(app_name, offset=offset, size=batch_size)
+            batch = await self.get_broadcasts_list(
+                app_name,
+                offset=offset,
+                size=batch_size,
+                strict=True,
+            )
             if not batch:
                 return all_streams
 
@@ -378,17 +394,18 @@ class AMSClient:
                     all_streams.append(s)
                     new_items_found = True
 
-            offset += len(batch)
             if len(batch) < batch_size:
                 return all_streams
 
+            offset += len(batch)
             if not new_items_found:
                 raise AMSAPIError(
                     f"AMS stream pagination repeated data for {app_name} at offset {offset}"
                 )
 
         raise AMSAPIError(
-            f"AMS stream pagination exceeded {max_pages} pages for {app_name}"
+            f"AMS broadcast pagination for {app_name} reached max_pages={max_pages} "
+            f"without an empty or partial page (next offset={offset})"
         )
 
     async def get_all_vods(
