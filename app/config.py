@@ -19,8 +19,15 @@ class Settings(BaseSettings):
     STREAM_METRICS_HISTORY_INTERVAL_SECONDS: int = 30
     METRIC_RETENTION_DAYS: int = Field(default=7, ge=1)
 
-    # Database (MySQL only)
-    DATABASE_URL: str
+    # Green API WhatsApp notifications
+    GREEN_API_ENABLED: bool = False
+    GREEN_API_URL: str = "https://api.green-api.com"
+    GREEN_API_INSTANCE_ID: str = ""
+    GREEN_API_TOKEN: str = ""
+    GREEN_API_CHAT_IDS: str = ""
+
+    # Database (MySQL Laragon by default)
+    DATABASE_URL: str = "mysql+aiomysql://root:@localhost:3306/ams_monitoring"
 
     # App Settings
     APP_NAME: str = "CCTV Monitoring Dashboard"

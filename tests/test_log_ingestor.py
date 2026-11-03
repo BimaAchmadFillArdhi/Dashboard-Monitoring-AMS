@@ -1,4 +1,3 @@
-import time
 import pytest
 from sqlalchemy import select
 
@@ -287,6 +286,67 @@ async def test_ingest_preserves_logs_for_time_based_retention(test_session, inse
         assert len(logs) == insert_count
         assert [log.ts for log in logs] == list(
             range(insert_count - 1, -1, -1)
+        )
+
+
+@pytest.mark.asyncio
+async def test_ingest_error_is_saved_without_immediate_whatsapp_send(test_session):
+    ingestor = LogIngestor()
+    entries = parse_raw_log_content(
+        "2026-10-26 12:54:09,765 [Thread-1] ERROR io.antmedia.Stream - "
+        "Failed to open stream (cam1.m3u8): connection refused"
+    )
+
+    count = await ingestor.ingest_chunk_data(entries, test_session)
+
+    assert count == 1
+    result = await test_session.execute(select(LogEntry))
+    assert result.scalars().one().level == "ERROR"
+    assert not hasattr(ingestor, "whatsapp_notifier")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("retention_limit", "insert_count"), [(50, 55), (100, 105)])
+async def test_ingest_enforces_per_app_stream_retention(
+    test_session, retention_limit, insert_count
+):
+    ingestor = LogIngestor()
+    ingestor.settings.LOG_RETENTION_LIMIT = retention_limit
+    test_session.add_all(
+        [
+            AmsStreamCurrent(app_name="app-one", stream_id="camera-one", status="broadcasting"),
+            AmsStreamCurrent(app_name="app-two", stream_id="camera-two", status="broadcasting"),
+        ]
+    )
+    await test_session.commit()
+
+    entries = []
+    for stream_id in ("camera-one", "camera-two"):
+        entries.extend(
+            RawLogEntry(
+                ts=timestamp,
+                level="INFO",
+                logger="test",
+                raw_message=f"event streamId:{stream_id}",
+            )
+            for timestamp in range(insert_count)
+        )
+
+    await ingestor.ingest_chunk_data(entries, test_session)
+
+    for app_name, stream_id in (
+        ("app-one", "camera-one"),
+        ("app-two", "camera-two"),
+    ):
+        result = await test_session.execute(
+            select(LogEntry)
+            .where(LogEntry.app_name == app_name, LogEntry.stream_id == stream_id)
+            .order_by(LogEntry.ts.desc(), LogEntry.id.desc())
+        )
+        logs = result.scalars().all()
+        assert len(logs) == retention_limit
+        assert [log.ts for log in logs] == list(
+            range(insert_count - 1, insert_count - retention_limit - 1, -1)
         )
 
 

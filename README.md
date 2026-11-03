@@ -132,6 +132,28 @@ Variabel penting:
 
 Snapshot dashboard dan ringkasan aplikasi memakai cache singkat agar request paralel tidak memicu polling AMS berulang. Retensi membatasi pertumbuhan data, tetapi ruang fisik DB tidak selalu mengecil setelah baris dihapus; MySQL `OPTIMIZE TABLE` memerlukan backup, ruang kosong yang cukup, dan maintenance window.
 
+### Notifikasi Error CCTV ke WhatsApp
+
+Laporan otomatis dikirim **dua kali sehari pada pukul 06.00 dan 20.00 WIB** sebagai satu pesan gabungan, bukan satu pesan untuk setiap error. Laporan berisi nama CCTV dengan error dalam enam kategori, berdasarkan log `ERROR` 12 jam terakhir. Kategori error adalah timeout, inisialisasi stream gagal, gagal membuka stream, alamat stream tidak ditemukan, autentikasi ditolak, dan lainnya.
+
+Di halaman Logs, tombol **Kirim WhatsApp** di samping **Ekspor CSV** juga mengirim satu laporan gabungan dari log `ERROR` yang cocok dengan filter aktif.
+Jika laporan melebihi batas panjang pesan WhatsApp, laporan dikirim sebagai beberapa pesan pada batas antarbaris agar nama stream tidak terpotong.
+
+Aktifkan Green API melalui `.env`:
+```dotenv
+GREEN_API_ENABLED=true
+GREEN_API_URL=https://api.green-api.com
+GREEN_API_INSTANCE_ID=id_instance_dari_green_api
+GREEN_API_TOKEN=api_token_instance_dari_green_api
+GREEN_API_CHAT_IDS=628123456789@c.us,120363xxxxxxxxxx@g.us
+```
+
+`GREEN_API_INSTANCE_ID` dan `GREEN_API_TOKEN` dapat diambil dari detail instance Green API. `GREEN_API_URL` gunakan API URL yang tercantum pada instance Anda di konsol Green API (contoh default di atas). `GREEN_API_CHAT_IDS` dapat berisi beberapa tujuan, dipisahkan koma:
+- Nomor pribadi: format negara + nomor tanpa `+`, misalnya `628123456789`; akhiran `@c.us` ditambahkan otomatis. Bisa juga tulis langsung `628123456789@c.us`.
+- Grup WhatsApp: gunakan Group Chat ID yang ditampilkan Green API, misalnya `120363xxxxxxxxxx@g.us`.
+
+Simpan token hanya di `.env` dan jangan commit nilainya. Jika token pernah diletakkan di `.env.example` atau dikirim ke chat, buat ulang/rotate token di konsol Green API, lalu perbarui `.env`. Pesan dikirim memakai metode Green API [SendMessage](https://green-api.com/en/docs/api/sending/SendMessage/). Jika pengaturan belum lengkap, tombol pengiriman tidak aktif.
+
 ### 4. Menjalankan Server
 ```bash
 # Development mode dengan reload

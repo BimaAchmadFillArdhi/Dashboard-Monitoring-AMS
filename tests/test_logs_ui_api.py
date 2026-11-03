@@ -1,3 +1,4 @@
+import time
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
@@ -89,6 +90,7 @@ def test_logs_page_render():
     assert "Live Streaming Log" in resp.text
     assert "200 baris terbaru" in resp.text
     assert "Ekspor CSV" in resp.text
+    assert "Kirim Laporan Sekarang" in resp.text
 
 
 def test_api_logs_query_all(override_db):
@@ -268,3 +270,93 @@ def test_api_logs_filter_by_app_and_system(override_db):
     resp_sys = client.get("/api/logs?app_name=SYSTEM")
     assert resp_sys.status_code == 200
     assert len(resp_sys.json()["entries"]) == 0
+
+
+def test_api_bulk_whatsapp_sends_one_grouped_report(override_db, monkeypatch):
+    from app.api import logs_api
+
+    sent_reports = []
+
+    async def capture_report(report):
+        sent_reports.append(report)
+        return {"sent": 1, "failed": 0}
+
+    monkeypatch.setattr(logs_api.whatsapp_notifier, "enabled", True)
+    monkeypatch.setattr(
+        logs_api.whatsapp_notifier, "api_url", "https://api.green-api.com"
+    )
+    monkeypatch.setattr(logs_api.whatsapp_notifier, "instance_id", "7103123456")
+    monkeypatch.setattr(logs_api.whatsapp_notifier, "api_token", "test-token")
+    monkeypatch.setattr(logs_api.whatsapp_notifier, "chat_ids", ["628123456789@c.us"])
+    monkeypatch.setattr(
+        logs_api.whatsapp_notifier,
+        "send_report",
+        capture_report,
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/logs/whatsapp/bulk?app_name=atcs")
+        assert response.status_code == 200
+        job_id = response.json()["job_id"]
+
+        for _ in range(50):
+            job_response = client.get(f"/api/logs/whatsapp/bulk/{job_id}")
+            assert job_response.status_code == 200
+            job = job_response.json()
+            if job["status"] in ("completed", "failed"):
+                break
+            time.sleep(0.02)
+
+    assert job["status"] == "completed"
+    assert job["total"] == 1
+    assert job["sent"] == 1
+    assert job["failed"] == 0
+    assert len(sent_reports) == 1
+    assert "*6. Lainnya*" in sent_reports[0]
+    assert "cam1" in sent_reports[0]
+    assert "cam2" not in sent_reports[0]
+    assert "Daftar CCTV Aktif" not in sent_reports[0]
+    assert "Daftar CCTV Mati/Down" not in sent_reports[0]
+    assert "Daftar Error Sesuai Filter" in sent_reports[0]
+
+
+def test_api_bulk_whatsapp_sends_error_report_when_filter_has_no_errors(
+    override_db, monkeypatch
+):
+    from app.api import logs_api
+
+    sent_reports = []
+
+    async def capture_report(report):
+        sent_reports.append(report)
+        return {"sent": 1, "failed": 0}
+
+    monkeypatch.setattr(logs_api.whatsapp_notifier, "enabled", True)
+    monkeypatch.setattr(
+        logs_api.whatsapp_notifier, "api_url", "https://api.green-api.com"
+    )
+    monkeypatch.setattr(logs_api.whatsapp_notifier, "instance_id", "7103123456")
+    monkeypatch.setattr(logs_api.whatsapp_notifier, "api_token", "test-token")
+    monkeypatch.setattr(logs_api.whatsapp_notifier, "chat_ids", ["628123456789@c.us"])
+    monkeypatch.setattr(logs_api.whatsapp_notifier, "send_report", capture_report)
+
+    with TestClient(app) as client:
+        response = client.post("/api/logs/whatsapp/bulk?stream_id=cam2")
+        assert response.status_code == 200
+        job_id = response.json()["job_id"]
+
+        for _ in range(50):
+            job_response = client.get(f"/api/logs/whatsapp/bulk/{job_id}")
+            assert job_response.status_code == 200
+            job = job_response.json()
+            if job["status"] in ("completed", "failed"):
+                break
+            time.sleep(0.02)
+
+    assert job["status"] == "completed"
+    assert job["sent"] == 1
+    assert len(sent_reports) == 1
+    assert "Daftar CCTV Aktif" not in sent_reports[0]
+    assert "Daftar CCTV Mati/Down" not in sent_reports[0]
+    assert "Daftar Error Sesuai Filter" in sent_reports[0]
+    assert "- Tidak ada" in sent_reports[0]

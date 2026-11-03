@@ -20,6 +20,12 @@ from app.services.application_service import get_application_service
 from app.services.log_service import get_log_service
 from app.services.sync_service import get_sync_service
 from app.ingest.log_ingestor import LogIngestor
+from app.services.whatsapp_notifier import WhatsAppNotifier
+from app.services.whatsapp_report_service import (
+    JAKARTA_TIMEZONE,
+    build_cctv_report,
+    next_report_time,
+)
 
 logger = logging.getLogger("ams.main")
 settings = get_settings()
@@ -32,9 +38,11 @@ log_ingest_lock_name = (
 bg_log_task: asyncio.Task | None = None
 bg_dashboard_task: asyncio.Task | None = None
 bg_stream_metrics_task: asyncio.Task | None = None
+bg_whatsapp_report_task: asyncio.Task | None = None
 dashboard_svc = get_dashboard_service()
 app_svc = get_application_service()
 sync_svc = get_sync_service()
+whatsapp_notifier = WhatsAppNotifier()
 
 
 async def background_log_poller():
@@ -182,6 +190,39 @@ async def background_stream_metrics_collector():
         await asyncio.sleep(interval)
 
 
+async def background_whatsapp_report_scheduler():
+    """Send grouped CCTV error reports every day at 06:00 and 20:00 WIB."""
+    if not whatsapp_notifier.is_configured:
+        logger.info("[WhatsAppReport] Green API is not configured; scheduled reports are disabled.")
+        return
+
+    logger.info("[WhatsAppReport] Scheduler started for 06:00 and 20:00 WIB.")
+    while True:
+        try:
+            now = datetime.now(JAKARTA_TIMEZONE)
+            scheduled_at = next_report_time(now)
+            delay_seconds = max(1, (scheduled_at - now).total_seconds())
+            logger.info(
+                "[WhatsAppReport] Next report scheduled at %s WIB.",
+                scheduled_at.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            await asyncio.sleep(delay_seconds)
+
+            async with AsyncSessionLocal() as session:
+                report = await build_cctv_report(session)
+            result = await whatsapp_notifier.send_report(report)
+            logger.info(
+                "[WhatsAppReport] Report sent: %s success, %s failed.",
+                result["sent"],
+                result["failed"],
+            )
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("[WhatsAppReport] Scheduled report failed.")
+            await asyncio.sleep(30)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize database schema
@@ -204,10 +245,11 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to warm up dashboard metrics from DB: {e}")
 
     # Start background tasks
-    global bg_log_task, bg_dashboard_task, bg_stream_metrics_task
+    global bg_log_task, bg_dashboard_task, bg_stream_metrics_task, bg_whatsapp_report_task
     bg_log_task = asyncio.create_task(background_log_poller())
     bg_dashboard_task = asyncio.create_task(background_dashboard_ticker())
     bg_stream_metrics_task = asyncio.create_task(background_stream_metrics_collector())
+    bg_whatsapp_report_task = asyncio.create_task(background_whatsapp_report_scheduler())
 
     yield
 
@@ -218,8 +260,16 @@ async def lifespan(app: FastAPI):
         bg_dashboard_task.cancel()
     if bg_stream_metrics_task:
         bg_stream_metrics_task.cancel()
+    if bg_whatsapp_report_task:
+        bg_whatsapp_report_task.cancel()
 
-    await asyncio.gather(bg_log_task, bg_dashboard_task, bg_stream_metrics_task, return_exceptions=True)
+    await asyncio.gather(
+        bg_log_task,
+        bg_dashboard_task,
+        bg_stream_metrics_task,
+        bg_whatsapp_report_task,
+        return_exceptions=True,
+    )
 
 
 app = FastAPI(
