@@ -59,7 +59,7 @@ async def test_failed_ams_request_uses_app_scoped_mysql_snapshot(
         "cctv-sleman", test_session, offset=0, size=50
     )
 
-    assert bantul_summary.live_count is None
+    assert bantul_summary.live_count == 24
     assert stream_total == 24
     assert live_count == 24
     assert offline_count == 0
@@ -180,6 +180,20 @@ async def test_dashboard_keeps_last_application_counts_when_ams_is_unavailable()
     empty_snapshot = await service.collect_snapshot()
     assert empty_snapshot.total_live_streams == 24
     assert empty_snapshot.applications == cached.applications
+
+    class FailedApplicationsAMS:
+        async def get_system_resources(self):
+            return SystemResources()
+
+        async def get_applications_info(self, **kwargs):
+            raise AMSAPIError("applications-info HTTP 500")
+
+    service.ams_client = FailedApplicationsAMS()
+    service._snapshot_updated_at = 0.0
+    failed_counts_snapshot = await service.collect_snapshot()
+    assert failed_counts_snapshot.ams_connected is True
+    assert failed_counts_snapshot.total_live_streams == 24
+    assert failed_counts_snapshot.applications == cached.applications
 
     class UnavailableAMS:
         async def get_system_resources(self):

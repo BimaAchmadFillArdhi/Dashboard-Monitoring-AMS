@@ -61,8 +61,10 @@ class ApplicationService:
         self._last_saved_ts: Dict[str, float] = {}
         self._last_application_overview: Optional[List[AppSummaryDTO]] = None
         self._overview_updated_at = 0.0
+        self._overview_failure_until = 0.0
         self._overview_lock = asyncio.Lock()
         self._overview_cache_seconds = 5.0
+        self._overview_failure_cache_seconds = 30.0
 
     async def _get_cached_application_overview(
         self, session: AsyncSession
@@ -92,16 +94,24 @@ class ApplicationService:
         return list(grouped.values())
 
     async def get_applications_overview(self, session: AsyncSession) -> List[AppSummaryDTO]:
+        now = time.monotonic()
         if (
             self._last_application_overview is not None
-            and time.monotonic() - self._overview_updated_at < self._overview_cache_seconds
+            and (
+                now - self._overview_updated_at < self._overview_cache_seconds
+                or now < self._overview_failure_until
+            )
         ):
             return self._last_application_overview
 
         async with self._overview_lock:
+            now = time.monotonic()
             if (
                 self._last_application_overview is not None
-                and time.monotonic() - self._overview_updated_at < self._overview_cache_seconds
+                and (
+                    now - self._overview_updated_at < self._overview_cache_seconds
+                    or now < self._overview_failure_until
+                )
             ):
                 return self._last_application_overview
 
@@ -110,6 +120,18 @@ class ApplicationService:
             self._overview_updated_at = time.monotonic()
             return result
 
+    async def _get_stale_applications_overview(
+        self, session: AsyncSession
+    ) -> List[AppSummaryDTO]:
+        self._overview_failure_until = (
+            time.monotonic() + self._overview_failure_cache_seconds
+        )
+        if session is not None:
+            mysql_snapshot = await self._get_cached_application_overview(session)
+            if mysql_snapshot:
+                return mysql_snapshot
+        return list(self._last_application_overview or [])
+
     async def _refresh_applications_overview(
         self, session: AsyncSession
     ) -> List[AppSummaryDTO]:
@@ -117,57 +139,20 @@ class ApplicationService:
         try:
             apps_info = await ams_client.get_applications_info(strict=True)
             if not apps_info:
-                if self._last_application_overview:
-                    logger.warning(
-                        "[ApplicationService] AMS returned no application metadata; "
-                        "serving cached applications without live counts"
-                    )
-                    return [
-                        item.model_copy(update={"live_count": None})
-                        for item in self._last_application_overview
-                    ]
-                cached = (
-                    await self._get_cached_application_overview(session)
-                    if session is not None
-                    else []
+                logger.warning(
+                    "[ApplicationService] AMS returned no application metadata; "
+                    "serving the latest MySQL stream snapshot"
                 )
-                if cached:
-                    logger.warning(
-                        "[ApplicationService] AMS returned no application metadata; "
-                        "serving the last stream snapshot without live counts"
-                    )
-                    return [
-                        item.model_copy(update={"live_count": None})
-                        for item in cached
-                    ]
+                return await self._get_stale_applications_overview(session)
         except AMSAPIError as err:
-            if self._last_application_overview:
-                logger.warning(
-                    "[ApplicationService] Unable to refresh application metadata; "
-                    "serving cached applications without live counts: %s",
-                    err,
-                )
-                return [
-                    item.model_copy(update={"live_count": None})
-                    for item in self._last_application_overview
-                ]
-            cached = (
-                await self._get_cached_application_overview(session)
-                if session is not None
-                else []
+            logger.warning(
+                "[ApplicationService] Unable to refresh application metadata; "
+                "serving the latest MySQL stream snapshot: %s",
+                err,
             )
-            if cached:
-                logger.warning(
-                    "[ApplicationService] Unable to refresh application metadata; "
-                    "serving the last stream snapshot without live counts: %s",
-                    err,
-                )
-                return [
-                    item.model_copy(update={"live_count": None})
-                    for item in cached
-                ]
-            raise
+            return await self._get_stale_applications_overview(session)
 
+        self._overview_failure_until = 0.0
         result = []
         cached_by_name = {}
         if session is not None:

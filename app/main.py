@@ -3,6 +3,7 @@ import logging
 import re
 from datetime import datetime
 from contextlib import asynccontextmanager
+from typing import Any, Callable, Coroutine
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, desc, text
@@ -19,6 +20,7 @@ from app.services.dashboard_service import get_dashboard_service
 from app.services.application_service import get_application_service
 from app.services.log_service import get_log_service
 from app.services.sync_service import get_sync_service
+from app.clients.ams_client import get_ams_client
 from app.ingest.log_ingestor import LogIngestor
 from app.services.whatsapp_notifier import WhatsAppNotifier
 from app.services.whatsapp_report_service import (
@@ -223,53 +225,91 @@ async def background_whatsapp_report_scheduler():
             await asyncio.sleep(30)
 
 
+def _ensure_background_task(
+    task: asyncio.Task | None,
+    worker: Callable[[], Coroutine[Any, Any, None]],
+    task_name: str,
+) -> asyncio.Task[None]:
+    if task is not None and not task.done():
+        return task
+    return asyncio.create_task(worker(), name=task_name)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize database schema
-    await init_db()
-    print(f"[{settings.APP_NAME}] MySQL database schema initialized successfully.")
-
     try:
+        # Startup: Initialize database schema and warm caches before starting workers.
+        await init_db()
+        print(f"[{settings.APP_NAME}] MySQL database schema initialized successfully.")
+
         async with AsyncSessionLocal() as session:
-            await get_log_service().query_logs(session=session, limit=1)
-        logger.info("[Startup] Log statistics cache warmed.")
-    except Exception as err:
-        logger.warning(f"[Startup] Could not warm the log statistics cache: {err}")
+            try:
+                await get_log_service().query_logs(session=session, limit=1)
+                logger.info("[Startup] Log statistics cache warmed.")
+            except Exception as err:
+                logger.warning(
+                    "[Startup] Could not warm the log statistics cache: %s",
+                    err,
+                )
 
-    # Warm up in-memory dashboard metric buffer from database
-    try:
         async with AsyncSessionLocal() as session:
-            await dashboard_svc.warm_up_history_from_db(session)
-            print(f"[{settings.APP_NAME}] Dashboard metrics buffer warmed up from database.")
-    except Exception as e:
-        logger.warning(f"Failed to warm up dashboard metrics from DB: {e}")
+            try:
+                await dashboard_svc.warm_up_history_from_db(session)
+                print(
+                    f"[{settings.APP_NAME}] Dashboard metrics buffer warmed up "
+                    "from database."
+                )
+            except Exception as err:
+                logger.warning(
+                    "[Startup] Could not warm dashboard metrics from MySQL: %s",
+                    err,
+                )
 
-    # Start background tasks
-    global bg_log_task, bg_dashboard_task, bg_stream_metrics_task, bg_whatsapp_report_task
-    bg_log_task = asyncio.create_task(background_log_poller())
-    bg_dashboard_task = asyncio.create_task(background_dashboard_ticker())
-    bg_stream_metrics_task = asyncio.create_task(background_stream_metrics_collector())
-    bg_whatsapp_report_task = asyncio.create_task(background_whatsapp_report_scheduler())
+        # Reuse active tasks if lifespan startup is invoked more than once.
+        global bg_log_task, bg_dashboard_task, bg_stream_metrics_task, bg_whatsapp_report_task
+        bg_log_task = _ensure_background_task(
+            bg_log_task, background_log_poller, "ams-log-poller"
+        )
+        bg_dashboard_task = _ensure_background_task(
+            bg_dashboard_task, background_dashboard_ticker, "ams-dashboard-ticker"
+        )
+        bg_stream_metrics_task = _ensure_background_task(
+            bg_stream_metrics_task,
+            background_stream_metrics_collector,
+            "ams-stream-metrics-collector",
+        )
+        bg_whatsapp_report_task = _ensure_background_task(
+            bg_whatsapp_report_task,
+            background_whatsapp_report_scheduler,
+            "ams-whatsapp-report-scheduler",
+        )
 
-    yield
+        yield
+    finally:
+        tasks = (
+            bg_log_task,
+            bg_dashboard_task,
+            bg_stream_metrics_task,
+            bg_whatsapp_report_task,
+        )
+        for task in tasks:
+            if task is not None and not task.done():
+                task.cancel()
 
-    # Shutdown
-    if bg_log_task:
-        bg_log_task.cancel()
-    if bg_dashboard_task:
-        bg_dashboard_task.cancel()
-    if bg_stream_metrics_task:
-        bg_stream_metrics_task.cancel()
-    if bg_whatsapp_report_task:
-        bg_whatsapp_report_task.cancel()
+        if tasks:
+            await asyncio.gather(
+                *(task for task in tasks if task is not None),
+                return_exceptions=True,
+            )
 
-    await asyncio.gather(
-        bg_log_task,
-        bg_dashboard_task,
-        bg_stream_metrics_task,
-        bg_whatsapp_report_task,
-        return_exceptions=True,
-    )
+        bg_log_task = None
+        bg_dashboard_task = None
+        bg_stream_metrics_task = None
+        bg_whatsapp_report_task = None
+        try:
+            await get_ams_client().close()
+        finally:
+            await async_engine.dispose()
 
 
 app = FastAPI(

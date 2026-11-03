@@ -77,6 +77,10 @@ class CircuitBreaker:
 class AMSClient:
     """Robust async HTTP client for Ant Media Server (AMS) Community Edition 3.1.0."""
 
+    APPLICATIONS_INFO_CACHE_SECONDS = 30.0
+    APPLICATIONS_INFO_COOLDOWN_SECONDS = 30.0
+    RETRYABLE_STATUS_CODES = {500, 502, 503, 504}
+
     def __init__(self):
         self.settings = get_settings()
         self.base_url = self.settings.AMS_BASE_URL.rstrip("/")
@@ -90,6 +94,10 @@ class AMSClient:
         self._circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=15.0)
         self._authenticated = False
         self._auth_lock = asyncio.Lock()
+        self._applications_info: Optional[List[ApplicationItem]] = None
+        self._applications_info_cached_at = 0.0
+        self._applications_info_retry_after = 0.0
+        self._applications_info_lock = asyncio.Lock()
 
     async def _get_client(self) -> httpx.AsyncClient:
         current_loop = asyncio.get_running_loop()
@@ -113,9 +121,18 @@ class AMSClient:
         return self._client
 
     async def close(self):
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
+        try:
+            if self._client and not self._client.is_closed:
+                await self._client.aclose()
+        finally:
             self._client = None
+            self._client_loop = None
+            self._authenticated = False
+            self._applications_info = None
+            self._applications_info_cached_at = 0.0
+            self._applications_info_retry_after = 0.0
+            self._auth_lock = asyncio.Lock()
+            self._applications_info_lock = asyncio.Lock()
 
     @property
     def is_connected(self) -> bool:
@@ -168,7 +185,8 @@ class AMSClient:
             if not auth_ok:
                 return None
 
-        for attempt in range(self.max_retries):
+        attempts = max(1, self.max_retries)
+        for attempt in range(attempts):
             try:
                 resp = await client.request(
                     method=method,
@@ -193,15 +211,42 @@ class AMSClient:
                 return resp
 
             except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as err:
-                logger.warning(f"[AMSClient] Network error on {path} (attempt {attempt + 1}/{self.max_retries}): {err}")
-                if attempt < self.max_retries - 1:
+                logger.warning(
+                    "[AMSClient] Network error on %s (attempt %s/%s): %s",
+                    path,
+                    attempt + 1,
+                    attempts,
+                    err,
+                )
+                if attempt < attempts - 1:
                     await asyncio.sleep(0.5 * (2 ** attempt))
                 else:
                     self._circuit_breaker.record_failure()
                     return None
             except httpx.HTTPStatusError as err:
-                logger.warning(f"[AMSClient] HTTP status error on {path}: {err}")
-                if resp.status_code >= 500:
+                status_code = err.response.status_code
+                retryable = (
+                    method.upper() in {"GET", "HEAD"}
+                    and status_code in self.RETRYABLE_STATUS_CODES
+                )
+                if retryable and attempt < attempts - 1:
+                    delay = 0.5 * (2 ** attempt)
+                    logger.warning(
+                        "[AMSClient] HTTP %s on %s (attempt %s/%s); retrying in %.1fs",
+                        status_code,
+                        path,
+                        attempt + 1,
+                        attempts,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.warning(
+                    "[AMSClient] HTTP status error on %s: %s",
+                    path,
+                    status_code,
+                )
+                if status_code >= 500:
                     self._circuit_breaker.record_failure()
                 return None
             except Exception as err:
@@ -311,20 +356,56 @@ class AMSClient:
         return applications
 
     async def get_applications_info(self, *, strict: bool = False) -> List[ApplicationItem]:
-        resp = await self.request("GET", "/rest/v2/applications-info")
-        if resp is None:
-            raise AMSAPIError("AMS applications-info request failed")
+        now = time.monotonic()
+        if (
+            self._applications_info is not None
+            and now - self._applications_info_cached_at
+            < self.APPLICATIONS_INFO_CACHE_SECONDS
+        ):
+            return list(self._applications_info)
 
-        try:
-            data = resp.json()
-        except ValueError as err:
-            raise AMSAPIError("AMS applications-info response is not valid JSON") from err
-        if not isinstance(data, list):
-            raise AMSAPIError("AMS applications-info response is not a list")
-        try:
-            return [ApplicationItem(**item) for item in data]
-        except (TypeError, ValueError) as err:
-            raise AMSAPIError("AMS applications-info response contains invalid data") from err
+        async with self._applications_info_lock:
+            now = time.monotonic()
+            if (
+                self._applications_info is not None
+                and now - self._applications_info_cached_at
+                < self.APPLICATIONS_INFO_CACHE_SECONDS
+            ):
+                return list(self._applications_info)
+            if now < self._applications_info_retry_after:
+                raise AMSAPIError(
+                    "AMS applications-info request is in cooldown after a failure"
+                )
+
+            try:
+                resp = await self.request("GET", "/rest/v2/applications-info")
+                if resp is None:
+                    raise AMSAPIError("AMS applications-info request failed")
+
+                try:
+                    data = resp.json()
+                except ValueError as err:
+                    raise AMSAPIError(
+                        "AMS applications-info response is not valid JSON"
+                    ) from err
+                if not isinstance(data, list):
+                    raise AMSAPIError("AMS applications-info response is not a list")
+                try:
+                    applications = [ApplicationItem(**item) for item in data]
+                except (TypeError, ValueError) as err:
+                    raise AMSAPIError(
+                        "AMS applications-info response contains invalid data"
+                    ) from err
+            except AMSAPIError:
+                self._applications_info_retry_after = (
+                    time.monotonic() + self.APPLICATIONS_INFO_COOLDOWN_SECONDS
+                )
+                raise
+
+            self._applications_info = applications
+            self._applications_info_cached_at = time.monotonic()
+            self._applications_info_retry_after = 0.0
+            return list(applications)
 
     async def get_broadcasts_count(self, app_name: str, *, strict: bool = False) -> int:
         resp = await self.proxy_request(f"{app_name}/rest/v2/broadcasts/count")

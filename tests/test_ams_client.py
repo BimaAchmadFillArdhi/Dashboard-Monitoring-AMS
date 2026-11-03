@@ -1,4 +1,6 @@
+import asyncio
 import json
+import httpx
 import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -181,6 +183,85 @@ async def test_broadcast_api_failures_raise_instead_of_returning_empty_data(monk
         await client.get_broadcasts_count("atcs")
     with pytest.raises(AMSAPIError):
         await client.get_broadcasts_list("atcs")
+
+
+@pytest.mark.asyncio
+async def test_get_retries_transient_http_500_with_exponential_backoff(monkeypatch):
+    client = AMSClient()
+    client._authenticated = True
+    response_500 = httpx.Response(
+        500,
+        request=httpx.Request("GET", "http://ams/rest/v2/applications-info"),
+    )
+    response_ok = httpx.Response(
+        200,
+        json=[],
+        request=httpx.Request("GET", "http://ams/rest/v2/applications-info"),
+    )
+    mock_http_client = SimpleNamespace(
+        request=AsyncMock(side_effect=[response_500, response_500, response_ok])
+    )
+    monkeypatch.setattr(
+        client, "_get_client", AsyncMock(return_value=mock_http_client)
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr("app.clients.ams_client.asyncio.sleep", sleep)
+
+    response = await client.request("GET", "/rest/v2/applications-info")
+
+    assert response is response_ok
+    assert mock_http_client.request.await_count == 3
+    assert [call.args[0] for call in sleep.await_args_list] == [0.5, 1.0]
+
+
+@pytest.mark.asyncio
+async def test_applications_info_failure_enters_cooldown_and_success_is_cached(monkeypatch):
+    client = AMSClient()
+    request = AsyncMock(return_value=None)
+    monkeypatch.setattr(client, "request", request)
+
+    with pytest.raises(AMSAPIError, match="request failed"):
+        await client.get_applications_info(strict=True)
+    with pytest.raises(AMSAPIError, match="cooldown"):
+        await client.get_applications_info(strict=True)
+
+    request.assert_awaited_once_with("GET", "/rest/v2/applications-info")
+
+    applications = [
+        ApplicationItem(name="test-app", liveStreamCount=3, vodCount=0, storage=0)
+    ]
+    response = SimpleNamespace(
+        json=lambda: [item.model_dump(by_alias=True) for item in applications]
+    )
+    request.reset_mock(return_value=True)
+    request.return_value = response
+    client._applications_info_retry_after = 0.0
+
+    assert await client.get_applications_info() == applications
+    assert await client.get_applications_info() == applications
+    request.assert_awaited_once_with("GET", "/rest/v2/applications-info")
+
+
+@pytest.mark.asyncio
+async def test_close_releases_http_client_and_resets_loop_scoped_state():
+    client = AMSClient()
+    http_client = SimpleNamespace(is_closed=False, aclose=AsyncMock())
+    client._client = http_client
+    client._client_loop = asyncio.get_running_loop()
+    client._authenticated = True
+    client._applications_info = []
+    client._applications_info_cached_at = 10.0
+    client._applications_info_retry_after = 20.0
+
+    await client.close()
+
+    http_client.aclose.assert_awaited_once()
+    assert client._client is None
+    assert client._client_loop is None
+    assert client._authenticated is False
+    assert client._applications_info is None
+    assert client._applications_info_cached_at == 0.0
+    assert client._applications_info_retry_after == 0.0
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.clients.ams_client import AMSAPIError
 from app.clients.models import ApplicationItem
-from app.services.application_service import ApplicationService
+from app.db.models import AmsStreamCurrent
+from app.services.application_service import AppSummaryDTO, ApplicationService
 
 
 def test_applications_page_render():
@@ -150,6 +151,45 @@ async def test_application_overview_preserves_ams_live_count_if_total_count_fail
 
     assert summary[0].live_count == 58
     assert summary[0].stream_count is None
+
+
+@pytest.mark.asyncio
+async def test_application_overview_uses_mysql_snapshot_during_ams_outage(monkeypatch):
+    ams_mock = SimpleNamespace(
+        get_applications_info=AsyncMock(
+            side_effect=AMSAPIError("applications-info unavailable")
+        )
+    )
+    monkeypatch.setattr("app.services.application_service.ams_client", ams_mock)
+    service = ApplicationService()
+    service._last_application_overview = [
+        AppSummaryDTO(
+            name="old-app",
+            stream_count=90,
+            live_count=80,
+            vod_count=0,
+            storage_mb=0.0,
+            problematic_count=0,
+        )
+    ]
+    mysql_streams = [
+        AmsStreamCurrent(app_name="mysql-app", stream_id="cam-1", status="broadcasting"),
+        AmsStreamCurrent(app_name="mysql-app", stream_id="cam-2", status="finished"),
+    ]
+    result = SimpleNamespace(
+        scalars=lambda: SimpleNamespace(all=lambda: mysql_streams)
+    )
+    session = SimpleNamespace(execute=AsyncMock(return_value=result))
+
+    overview = await service.get_applications_overview(session)
+    cached_overview = await service.get_applications_overview(session)
+
+    assert [(item.name, item.stream_count, item.live_count) for item in overview] == [
+        ("mysql-app", 2, 1)
+    ]
+    assert cached_overview == overview
+    ams_mock.get_applications_info.assert_awaited_once_with(strict=True)
+    session.execute.assert_awaited_once()
 
 
 def test_applications_page_includes_stream_summary_and_fetches_pages():
