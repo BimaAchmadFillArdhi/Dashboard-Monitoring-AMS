@@ -3,18 +3,16 @@ import time
 import hashlib
 import logging
 from datetime import datetime
-from typing import Optional, List, Dict, Tuple, Any
-from sqlalchemy import select, update, delete
+from typing import Optional, List, Dict, Tuple
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.models import LogEntry, UnmatchedPattern, IngestState
 from app.clients.ams_client import get_ams_client
 from app.translator.engine import get_translator
-from app.services.log_retention import (
-    delete_expired_log_entries,
-    retain_log_entries,
-)
+from app.services.log_retention import delete_expired_log_entries
+from app.services.log_service import get_log_service
 
 logger = logging.getLogger("ams.ingestor")
 
@@ -169,7 +167,7 @@ class LogIngestor:
     async def ingest_chunk_data(
         self, entries: List[RawLogEntry], session: AsyncSession
     ) -> int:
-        """Translate parsed entries and batch insert into the configured database."""
+        """Translate and batch insert entries; the caller commits them with the cursor."""
         if not entries:
             return 0
 
@@ -225,14 +223,31 @@ class LogIngestor:
         # Batch insert log entries
         session.add_all(db_entries)
 
-        # Record or update unmatched patterns
-        for (pattern_sample, level), timestamps in unmatched_dict.items():
-            stmt = select(UnmatchedPattern).where(
-                UnmatchedPattern.pattern_sample == pattern_sample,
-                UnmatchedPattern.level == level,
+        # Load unmatched-pattern rows in bounded batches to avoid one query per pattern.
+        unmatched_keys = list(unmatched_dict)
+        unmatched_rows = {}
+        for start in range(0, len(unmatched_keys), 200):
+            key_batch = unmatched_keys[start : start + 200]
+            conditions = [
+                and_(
+                    UnmatchedPattern.pattern_sample == pattern_sample,
+                    UnmatchedPattern.level == level,
+                )
+                for pattern_sample, level in key_batch
+            ]
+            result = await session.execute(
+                select(UnmatchedPattern).where(or_(*conditions))
             )
-            res = await session.execute(stmt)
-            existing = res.scalar_one_or_none()
+            unmatched_rows.update(
+                {
+                    (row.pattern_sample, row.level): row
+                    for row in result.scalars().all()
+                }
+            )
+
+        # Record or update unmatched patterns.
+        for (pattern_sample, level), timestamps in unmatched_dict.items():
+            existing = unmatched_rows.get((pattern_sample, level))
             if existing:
                 existing.occurrences += len(timestamps)
                 existing.last_seen = max(existing.last_seen, max(timestamps))
@@ -247,17 +262,6 @@ class LogIngestor:
                 session.add(up)
 
         await session.flush()
-        affected_groups = {
-            (entry.app_name, entry.stream_id)
-            for entry in db_entries
-            if entry.stream_id
-        }
-        await retain_log_entries(
-            session,
-            self.settings.LOG_RETENTION_LIMIT,
-            groups=list(affected_groups),
-        )
-        await session.commit()
         return len(db_entries)
 
     async def poll_server_logs(self, session: AsyncSession, log_type: str = "server") -> int:
@@ -293,12 +297,20 @@ class LogIngestor:
             await session.commit()
             return 0
 
-        # Parse and ingest chunk
-        raw_entries = parse_raw_log_content(chunk.logContent)
+        # Leave an incomplete trailing line at the cursor so the next poll can read it whole.
+        last_newline = chunk.logContent.rfind("\n")
+        if last_newline < 0:
+            state.last_file_size = chunk.logFileSize
+            await session.commit()
+            return 0
+
+        complete_content = chunk.logContent[: last_newline + 1]
+        consumed_size = len(complete_content.encode("utf-8"))
+        raw_entries = parse_raw_log_content(complete_content)
         ingested_count = await self.ingest_chunk_data(raw_entries, session)
 
-        # Update offset
-        state.last_offset += chunk.logContentSize
+        # Commit records and cursor together so a failed poll safely retries the same bytes.
+        state.last_offset += consumed_size
         state.last_file_size = chunk.logFileSize
         await session.commit()
 
@@ -311,25 +323,21 @@ class LogIngestor:
         return ingested_count
 
     async def cleanup_old_logs(self, session: AsyncSession) -> int:
-        """Enforce per-stream log limits and purge expired logs in small batches."""
-        deleted_count = await retain_log_entries(
-            session,
-            self.settings.LOG_RETENTION_LIMIT,
-            commit_batches=True,
-        )
-
+        """Purge logs older than the configured retention period in bounded batches."""
+        deleted_count = 0
         retention_days = self.settings.LOG_RETENTION_DAYS
         if retention_days <= 0:
-            await session.commit()
-            return deleted_count
+            return 0
 
         cutoff_ts = int((time.time() - (retention_days * 86400)) * 1000)
         deleted_count += await delete_expired_log_entries(session, cutoff_ts)
 
         await session.commit()
         if deleted_count > 0:
+            get_log_service().invalidate_stats_cache()
+        if deleted_count > 0:
             logger.info(
-                f"[LogIngestor] Retained at most {self.settings.LOG_RETENTION_LIMIT} "
-                f"logs per app/stream and deleted {deleted_count} excess or expired entries."
+                f"[LogIngestor] Deleted {deleted_count} log entries older than "
+                f"{retention_days} days."
             )
         return deleted_count

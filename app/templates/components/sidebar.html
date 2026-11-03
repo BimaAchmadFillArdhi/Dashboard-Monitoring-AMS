@@ -168,10 +168,10 @@
                                     </svg>
                                     <span class="truncate" x-text="app.name"></span>
                                 </div>
-                                <template x-if="app.problematic_count > 0">
+                                <template x-if="app.live_count != null">
                                     <span
                                         class="ml-2 flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium leading-none"
-                                        x-text="app.problematic_count"></span>
+                                        x-text="app.live_count"></span>
                                 </template>
                             </button>
                         </div>
@@ -244,10 +244,10 @@
                                     </svg>
                                     <span class="truncate" x-text="app.name"></span>
                                 </div>
-                                <template x-if="app.problematic_count > 0">
+                                <template x-if="app.live_count != null">
                                     <span
                                         class="ml-2 flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium leading-none"
-                                        x-text="app.problematic_count"></span>
+                                        x-text="app.live_count"></span>
                                 </template>
                             </button>
                         </div>
@@ -411,10 +411,10 @@
                                     </svg>
                                     <span class="truncate" x-text="app.name"></span>
                                 </div>
-                                <template x-if="app.problematic_count > 0">
+                                <template x-if="app.live_count != null">
                                     <span
                                         class="ml-2 flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium leading-none"
-                                        x-text="app.problematic_count"></span>
+                                        x-text="app.live_count"></span>
                                 </template>
                             </button>
                         </div>

@@ -11,8 +11,7 @@ from sqlalchemy import (
 )
 from app.db.session import Base
 
-# Universal ID column that autoincrements on both SQLite (ROWID Integer) and MySQL (BIGINT)
-AutoId = BigInteger().with_variant(Integer, "sqlite")
+AutoId = BigInteger()
 
 
 class LogEntry(Base):

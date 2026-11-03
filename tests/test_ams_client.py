@@ -216,6 +216,57 @@ async def test_get_all_broadcasts_paginates_until_short_page(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_all_broadcasts_continues_after_short_page_when_count_requires_more(
+    monkeypatch,
+):
+    client = AMSClient()
+    pages = {
+        0: [BroadcastStream(streamId="cam-1"), BroadcastStream(streamId="cam-2")],
+        2: [BroadcastStream(streamId="cam-3"), BroadcastStream(streamId="cam-4")],
+        4: [BroadcastStream(streamId="cam-5")],
+    }
+    calls = []
+
+    async def get_page(app_name, offset=0, size=50, *, strict=False):
+        calls.append((offset, size))
+        return pages.get(offset, [])
+
+    monkeypatch.setattr(client, "get_broadcasts_list", get_page)
+
+    streams = await client.get_all_broadcasts(
+        "atcs",
+        batch_size=3,
+        expected_count=5,
+    )
+
+    assert [stream.streamId for stream in streams] == [
+        "cam-1",
+        "cam-2",
+        "cam-3",
+        "cam-4",
+        "cam-5",
+    ]
+    assert calls == [(0, 3), (2, 3), (4, 1)]
+
+
+@pytest.mark.asyncio
+async def test_get_all_broadcasts_rejects_empty_page_before_expected_count(monkeypatch):
+    client = AMSClient()
+
+    async def get_page(app_name, offset=0, size=50, *, strict=False):
+        return [BroadcastStream(streamId="cam-1")] if offset == 0 else []
+
+    monkeypatch.setattr(client, "get_broadcasts_list", get_page)
+
+    with pytest.raises(AMSAPIError, match="expected 3"):
+        await client.get_all_broadcasts(
+            "atcs",
+            batch_size=2,
+            expected_count=3,
+        )
+
+
+@pytest.mark.asyncio
 async def test_get_all_broadcasts_reads_empty_page_at_exact_boundary(monkeypatch):
     client = AMSClient()
     calls = []

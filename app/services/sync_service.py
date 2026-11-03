@@ -3,7 +3,7 @@ import time
 import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from sqlalchemy import select, desc, and_
+from sqlalchemy import select, desc, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.ams_client import get_ams_client
@@ -13,7 +13,6 @@ from app.db.models import (
     AmsStreamCurrent,
     AmsStreamStatusHistory,
     StreamMetricHistory,
-    ServerMetricHistory,
 )
 from app.services.dashboard_service import get_dashboard_service
 from app.services.log_retention import retain_status_history, retain_sync_logs
@@ -28,6 +27,7 @@ class SyncService:
         self.dashboard_service = get_dashboard_service()
         self.settings = get_settings()
         self._sync_lock = asyncio.Lock()
+        self._last_metric_sample_at = 0.0
 
     async def sync_all_applications_streams(self, session: AsyncSession) -> Dict[str, Any]:
         """Serialize full snapshots so scheduled and manual syncs cannot race."""
@@ -48,6 +48,10 @@ class SyncService:
         status_groups: set[tuple[str, str]] = set()
         now_dt = datetime.utcnow()
         now_ms = int(time.time() * 1000)
+        persist_metrics = (
+            time.monotonic() - self._last_metric_sample_at
+            >= self.settings.STREAM_METRICS_HISTORY_INTERVAL_SECONDS
+        )
 
         try:
             apps = await self.ams_client.get_applications(strict=True)
@@ -83,7 +87,11 @@ class SyncService:
                 expected_count = await self.ams_client.get_broadcasts_count(
                     app_name, strict=True
                 )
-                streams = await self.ams_client.get_all_broadcasts(app_name, batch_size=50)
+                streams = await self.ams_client.get_all_broadcasts(
+                    app_name,
+                    batch_size=50,
+                    expected_count=expected_count,
+                )
                 if len(streams) != expected_count:
                     raise RuntimeError(
                         f"AMS returned {len(streams)} broadcasts for {app_name}, "
@@ -94,6 +102,7 @@ class SyncService:
                 stmt = select(AmsStreamCurrent).where(AmsStreamCurrent.app_name == app_name)
                 res = await session.execute(stmt)
                 existing_records = {r.stream_id: r for r in res.scalars().all()}
+                received_ids = {stream.streamId for stream in streams}
 
                 for s in streams:
                     sid = s.streamId
@@ -170,22 +179,45 @@ class SyncService:
                         session.add(initial_status_hist)
                         status_groups.add((app_name, sid))
 
-                    # 4. Save telemetry point for time-series charts
-                    metric = StreamMetricHistory(
-                        ts=now_ms,
-                        app_name=app_name,
-                        stream_id=sid,
-                        status=new_status,
-                        bitrate=s.bitrate or 0,
-                        bitrate_mbps=round((s.bitrate or 0) / 1_000_000.0, 2),
-                        speed=round(s.speed, 2) if s.speed is not None else 0.0,
-                        total_viewers=s.total_viewers,
-                        hls_viewers=s.hlsViewerCount or 0,
-                        webrtc_viewers=s.webRTCViewerCount or 0,
-                        dash_viewers=s.dashViewerCount or 0,
-                        created_at=now_dt,
+                    if persist_metrics:
+                        metric = StreamMetricHistory(
+                            ts=now_ms,
+                            app_name=app_name,
+                            stream_id=sid,
+                            status=new_status,
+                            bitrate=s.bitrate or 0,
+                            bitrate_mbps=round((s.bitrate or 0) / 1_000_000.0, 2),
+                            speed=round(s.speed, 2) if s.speed is not None else 0.0,
+                            total_viewers=s.total_viewers,
+                            hls_viewers=s.hlsViewerCount or 0,
+                            webrtc_viewers=s.webRTCViewerCount or 0,
+                            dash_viewers=s.dashViewerCount or 0,
+                            created_at=now_dt,
+                        )
+                        session.add(metric)
+
+                stale_ids = existing_records.keys() - received_ids
+                if stale_ids:
+                    for stream_id in stale_ids:
+                        previous = existing_records[stream_id]
+                        session.add(
+                            AmsStreamStatusHistory(
+                                app_name=app_name,
+                                stream_id=stream_id,
+                                old_status=previous.status,
+                                new_status="removed",
+                                details="Stream tidak lagi tercantum pada snapshot AMS lengkap",
+                                ts=now_ms,
+                                created_at=now_dt,
+                            )
+                        )
+                        status_groups.add((app_name, stream_id))
+                    await session.execute(
+                        delete(AmsStreamCurrent).where(
+                            AmsStreamCurrent.app_name == app_name,
+                            AmsStreamCurrent.stream_id.in_(stale_ids),
+                        )
                     )
-                    session.add(metric)
 
                 app_dur_ms = int((time.monotonic() - app_start_t) * 1000)
                 app_log = AmsSyncLog(
@@ -229,6 +261,8 @@ class SyncService:
 
         # Commit all updates and logs
         await session.commit()
+        if persist_metrics and apps_synced:
+            self._last_metric_sample_at = time.monotonic()
 
         total_dur_ms = int((time.monotonic() - sync_start_t) * 1000)
         failed_apps = [app_name for app_name in apps if app_name not in apps_synced]

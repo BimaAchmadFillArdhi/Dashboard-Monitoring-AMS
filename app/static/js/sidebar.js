@@ -59,6 +59,7 @@ document.addEventListener('alpine:init', () => {
         })(),
         isLoadingApps: false,
         appsUnavailable: true,
+        appsRefreshTimer: null,
 
         // Selected application
         selectedApp: (function() {
@@ -72,6 +73,11 @@ document.addEventListener('alpine:init', () => {
                 this.selectedApp = params.get('app');
             }
             this.fetchApps();
+            this.appsRefreshTimer = setInterval(() => {
+                if (!document.hidden && !this.isLoadingApps) {
+                    this.fetchApps();
+                }
+            }, 30000);
 
             // Handle popstate for browser back/forward buttons seamlessly
             window.addEventListener('popstate', () => {
@@ -160,6 +166,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         async fetchApps() {
+            if (this.isLoadingApps) return;
             this.isLoadingApps = true;
             try {
                 const res = await fetch('/api/applications');
@@ -173,7 +180,7 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 this.apps = apps;
-                this.appsUnavailable = false;
+                this.appsUnavailable = apps.some(app => app.live_count == null);
                 try {
                     localStorage.setItem('wiko_cached_apps', JSON.stringify(this.apps));
                 } catch (e) {}

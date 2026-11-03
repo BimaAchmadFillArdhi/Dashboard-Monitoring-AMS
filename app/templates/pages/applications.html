@@ -24,10 +24,27 @@
         appsUnavailable: true,
         
         // Streams data
-        allStreams: [],
         streams: [],
+        streamPage: 1,
+        streamPageSize: 25,
+        streamTotal: 0,
+        streamRequestController: null,
         isLoadingStreams: false,
         streamsUnavailable: false,
+        get streamTotalPages() {
+            return Math.max(1, Math.ceil(this.streamTotal / this.streamPageSize));
+        },
+        get streamPageNumbers() {
+            const total = this.streamTotalPages;
+            const start = Math.max(1, Math.min(this.streamPage - 2, total - 4));
+            return Array.from({ length: Math.min(5, total) }, (_, index) => start + index);
+        },
+        get streamRangeStart() {
+            return this.streamTotal === 0 ? 0 : (this.streamPage - 1) * this.streamPageSize + 1;
+        },
+        get streamRangeEnd() {
+            return Math.min(this.streamPage * this.streamPageSize, this.streamTotal);
+        },
         
         // VoD data
         vods: [],
@@ -95,9 +112,10 @@
                     throw new Error('Respons ringkasan aplikasi bukan berupa daftar');
                 }
                 this.apps = apps;
-                this.appsUnavailable = false;
+                this.appsUnavailable = apps.some(app => app.live_count == null);
                 if (window.Alpine && Alpine.store('sidebar')) {
                     Alpine.store('sidebar').apps = this.apps;
+                    Alpine.store('sidebar').appsUnavailable = this.appsUnavailable;
                 }
                 if (this.apps.length > 0 && !this.apps.some(a => a.name === this.selectedApp)) {
                     this.selectedApp = this.apps[0].name;
@@ -120,52 +138,56 @@
             }
         },
         
-        async fetchStreams() {
+        async fetchStreams(resetPage = false) {
+            if (resetPage) this.streamPage = 1;
+            if (this.streamRequestController) this.streamRequestController.abort();
+            const controller = new AbortController();
+            this.streamRequestController = controller;
             this.isLoadingStreams = true;
             this.streamsUnavailable = false;
             try {
-                const pageSize = 50;
-                const allStreams = [];
-                let offset = 0;
-
-                while (true) {
-                    const params = new URLSearchParams({
-                        offset: String(offset),
-                        size: String(pageSize)
-                    });
-                    const url = `/api/applications/${encodeURIComponent(this.selectedApp)}/streams?${params}`;
-                    const res = await fetch(url);
-                    if (!res.ok) {
-                        throw new Error(`Permintaan stream gagal: HTTP ${res.status}`);
-                    }
-
-                    const page = await res.json();
-                    allStreams.push(...page);
-                    if (page.length < pageSize) break;
-                    offset += page.length;
+                const params = new URLSearchParams({
+                    offset: String((this.streamPage - 1) * this.streamPageSize),
+                    size: String(this.streamPageSize)
+                });
+                if (this.searchQuery.trim()) {
+                    params.set('q', this.searchQuery.trim());
+                }
+                const url = `/api/applications/${encodeURIComponent(this.selectedApp)}/streams?${params}`;
+                const res = await fetch(url, { signal: controller.signal });
+                if (!res.ok) {
+                    throw new Error(`Permintaan stream gagal: HTTP ${res.status}`);
                 }
 
-                this.allStreams = allStreams;
-                this.filterStreams();
+                const page = await res.json();
+                if (this.streamRequestController !== controller) return;
+                this.streams = page.entries;
+                this.streamTotal = page.total;
                 this.streamsUnavailable = false;
             } catch (err) {
-                this.allStreams = [];
+                if (err.name === 'AbortError') return;
+                if (this.streamRequestController !== controller) return;
                 this.streams = [];
+                this.streamTotal = 0;
                 this.streamsUnavailable = true;
                 console.error('Gagal mengambil daftar stream:', err);
             } finally {
-                this.isLoadingStreams = false;
+                if (this.streamRequestController === controller) {
+                    this.streamRequestController = null;
+                    this.isLoadingStreams = false;
+                }
             }
         },
 
-        filterStreams() {
-            const query = this.searchQuery.trim().toLowerCase();
-            this.streams = query
-                ? this.allStreams.filter(stream =>
-                    (stream.name || '').toLowerCase().includes(query) ||
-                    (stream.stream_id || '').toLowerCase().includes(query)
-                )
-                : this.allStreams;
+        async fetchStreamPage(page) {
+            if (page < 1 || page > this.streamTotalPages || page === this.streamPage) return;
+            this.streamPage = page;
+            await this.fetchStreams();
+        },
+
+        async setStreamPageSize(size) {
+            this.streamPageSize = Number(size);
+            await this.fetchStreams(true);
         },
 
         async fetchVods() {
@@ -190,8 +212,9 @@
             }
             this.searchQuery = '';
             this.vodSearchQuery = '';
+            this.streamPage = 1;
             this.closeDrawer();
-            this.fetchStreams();
+            this.fetchStreams(true);
             if (this.activeTab === 'vod') {
                 this.fetchVods();
             }
@@ -524,7 +547,7 @@
                     <span x-text="selectedAppSummary.live_count ?? '—'"></span> live
                 </span>
                 <div class="relative w-full sm:w-64">
-                    <input type="text" x-model="searchQuery" @input.debounce.300ms="filterStreams()"
+                    <input type="text" x-model="searchQuery" @input.debounce.300ms="fetchStreams(true)"
                         placeholder="Cari kamera atau stream..."
                         class="h-8 w-full pl-7 pr-2.5 text-xs rounded border border-[var(--border-color)] bg-[var(--bg-surface)] text-[var(--text-main)] placeholder-[var(--text-subtle)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]">
                     <div
@@ -594,7 +617,7 @@
                                     <h4 class="text-xs font-semibold text-[var(--text-main)]"
                                         x-text="streamsUnavailable ? 'Daftar stream tidak tersedia' : 'Tidak ada stream pada aplikasi ini'"></h4>
                                     <p class="text-[11px] text-[var(--text-muted)] mt-1"
-                                        x-text="streamsUnavailable ? 'AMS gagal mengirim daftar stream. Coba muat ulang setelah koneksi pulih.' : 'Aplikasi belum memiliki stream CCTV atau kriteria pencarian tidak cocok.'"></p>
+                                        x-text="streamsUnavailable ? 'Snapshot stream MySQL tidak tersedia. Periksa sinkronisasi AMS lalu coba lagi.' : 'Aplikasi belum memiliki stream CCTV atau kriteria pencarian tidak cocok.'"></p>
                                 </div>
                             </td>
                         </tr>
@@ -658,6 +681,39 @@
                         </template>
                     </tbody>
                 </table>
+            </div>
+            <div class="flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] text-[var(--text-muted)]">
+                <div class="flex items-center gap-2">
+                    <span x-text="`${streamRangeStart}–${streamRangeEnd} dari ${streamTotal}`"></span>
+                    <label for="stream-page-size">Baris:</label>
+                    <select id="stream-page-size" :value="streamPageSize"
+                        @change="setStreamPageSize($event.target.value)"
+                        class="rounded border border-[var(--border-color)] bg-[var(--bg-surface)] px-2 py-1 text-[var(--text-main)]">
+                        <option value="25">25</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                </div>
+                <div class="flex items-center gap-1">
+                    <button type="button" @click="fetchStreamPage(streamPage - 1)"
+                        :disabled="streamPage <= 1 || isLoadingStreams"
+                        class="rounded border border-[var(--border-color)] px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed">
+                        Previous
+                    </button>
+                    <template x-for="page in streamPageNumbers" :key="page">
+                        <button type="button" @click="fetchStreamPage(page)"
+                            :aria-current="page === streamPage ? 'page' : null"
+                            :disabled="isLoadingStreams || streamTotal === 0"
+                            :class="page === streamPage ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'border-[var(--border-color)] hover:bg-[var(--bg-surface-hover)]'"
+                            class="min-w-7 rounded border px-2 py-1 disabled:cursor-not-allowed"
+                            x-text="page"></button>
+                    </template>
+                    <button type="button" @click="fetchStreamPage(streamPage + 1)"
+                        :disabled="streamPage >= streamTotalPages || isLoadingStreams"
+                        class="rounded border border-[var(--border-color)] px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed">
+                        Next
+                    </button>
+                </div>
             </div>
         </div>
 

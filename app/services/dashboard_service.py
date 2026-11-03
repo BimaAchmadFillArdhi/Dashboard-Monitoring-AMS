@@ -2,15 +2,16 @@ import time
 import asyncio
 import collections
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, List, Dict, Any, Deque
 from pydantic import BaseModel
-from sqlalchemy import select, desc, asc, delete
+from sqlalchemy import select, desc, asc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.ams_client import get_ams_client
 from app.clients.models import SystemResources, ApplicationItem
 from app.db.models import ServerMetricHistory
+from app.services.log_retention import delete_expired_rows
 
 logger = logging.getLogger("ams.dashboard_service")
 
@@ -95,7 +96,9 @@ class DashboardService:
         self._db_hist: Deque[float] = collections.deque(maxlen=buffer_maxlen)
 
         self._last_snapshot: Optional[DashboardSnapshot] = None
+        self._snapshot_updated_at = 0.0
         self._lock = asyncio.Lock()
+        self.snapshot_cache_seconds = 3.0
 
     def get_history(self) -> RingBufferHistory:
         return RingBufferHistory(
@@ -241,15 +244,32 @@ class DashboardService:
         if retention_days <= 0:
             return 0
         cutoff_ms = int((time.time() - (retention_days * 86400)) * 1000)
-        stmt = delete(ServerMetricHistory).where(ServerMetricHistory.ts < cutoff_ms)
-        res = await session.execute(stmt)
-        deleted = res.rowcount
+        deleted = await delete_expired_rows(
+            session,
+            ServerMetricHistory,
+            ServerMetricHistory.ts,
+            cutoff_ms,
+        )
         await session.commit()
         return deleted
 
     async def collect_snapshot(self) -> DashboardSnapshot:
         """Fetch fresh system metrics and update in-memory ring buffer."""
+        now_monotonic = time.monotonic()
+        if (
+            self._last_snapshot is not None
+            and now_monotonic - self._snapshot_updated_at < self.snapshot_cache_seconds
+        ):
+            return self._last_snapshot
+
         async with self._lock:
+            now_monotonic = time.monotonic()
+            if (
+                self._last_snapshot is not None
+                and now_monotonic - self._snapshot_updated_at < self.snapshot_cache_seconds
+            ):
+                return self._last_snapshot
+
             resources: Optional[SystemResources] = None
             apps_info: List[ApplicationItem] = []
             connected = False
@@ -276,20 +296,23 @@ class DashboardService:
 
             if not connected or resources is None:
                 if self._last_snapshot:
-                    return self._last_snapshot.model_copy(
+                    snapshot = self._last_snapshot.model_copy(
                         update={
                             "ams_connected": False,
                             "server_time": time_label,
                             "history": self.get_history(),
                         }
                     )
-                history = self.get_history()
-                return DashboardSnapshot(
-                    ams_connected=False,
-                    server_time=time_label,
-                    history=history,
-                    applications=[]
-                )
+                else:
+                    snapshot = DashboardSnapshot(
+                        ams_connected=False,
+                        server_time=time_label,
+                        history=self.get_history(),
+                        applications=[],
+                    )
+                self._last_snapshot = snapshot
+                self._snapshot_updated_at = time.monotonic()
+                return snapshot
 
             # 1. Parse CPU
             cpu_pct = float(resources.cpuUsage.systemCPULoad) if resources.cpuUsage else 0.0
@@ -394,6 +417,7 @@ class DashboardService:
                 history=self.get_history(),
             )
             self._last_snapshot = snapshot
+            self._snapshot_updated_at = time.monotonic()
             return snapshot
 
 

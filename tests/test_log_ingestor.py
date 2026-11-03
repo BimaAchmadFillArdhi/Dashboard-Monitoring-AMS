@@ -1,17 +1,16 @@
 import time
 import pytest
-import pytest_asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import select
 
 from app.db.models import (
     AmsStreamCurrent,
     AmsStreamStatusHistory,
     AmsSyncLog,
-    Base,
+    IngestState,
     LogEntry,
     UnmatchedPattern,
 )
+from app.clients.models import LogFileChunk
 from app.config import Settings
 from app.ingest.log_ingestor import (
     RawLogEntry,
@@ -30,27 +29,21 @@ from app.services.log_retention import (
 
 @pytest.mark.parametrize("retention_limit", ["50", "100"])
 def test_log_retention_limit_accepts_supported_environment_values(retention_limit):
-    settings = Settings(_env_file=None, LOG_RETENTION_LIMIT=retention_limit)
+    settings = Settings(
+        _env_file=None,
+        DATABASE_URL="mysql+aiomysql://localhost/ams_monitoring_test",
+        LOG_RETENTION_LIMIT=retention_limit,
+    )
     assert settings.LOG_RETENTION_LIMIT == int(retention_limit)
 
 
 def test_log_retention_limit_rejects_unsupported_value():
     with pytest.raises(ValueError):
-        Settings(_env_file=None, LOG_RETENTION_LIMIT="75")
-
-
-@pytest_asyncio.fixture
-async def test_session():
-    # In-memory SQLite for isolated testing
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    session_factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
-    async with session_factory() as session:
-        yield session
-
-    await engine.dispose()
+        Settings(
+            _env_file=None,
+            DATABASE_URL="mysql+aiomysql://localhost/ams_monitoring_test",
+            LOG_RETENTION_LIMIT="75",
+        )
 
 
 def test_parse_multiline_log():
@@ -140,12 +133,125 @@ async def test_ingest_chunk_data(test_session):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("retention_limit", "insert_count"), [(50, 55), (100, 105)])
-async def test_ingest_enforces_per_app_stream_retention(
-    test_session, retention_limit, insert_count
-):
+async def test_poll_commits_log_entries_with_incremental_offset(test_session, monkeypatch):
     ingestor = LogIngestor()
-    ingestor.settings.LOG_RETENTION_LIMIT = retention_limit
+    content = (
+        "2026-10-26 12:54:09,765 [Thread-1] INFO  io.antmedia.Test - "
+        "Incremental event streamId:camera-1\n"
+    )
+    chunk = LogFileChunk(
+        logContent=content,
+        logContentSize=len(content.encode("utf-8")),
+        logFileSize=len(content.encode("utf-8")),
+    )
+
+    async def get_log_chunk(**kwargs):
+        return chunk
+
+    monkeypatch.setattr(ingestor.ams_client, "get_log_chunk", get_log_chunk)
+
+    assert await ingestor.poll_server_logs(test_session) == 1
+
+    state = (
+        await test_session.execute(
+            select(IngestState).where(IngestState.key == "server_log_offset")
+        )
+    ).scalar_one()
+    logs = (await test_session.execute(select(LogEntry))).scalars().all()
+    assert state.last_offset == chunk.logContentSize
+    assert len(logs) == 1
+
+
+@pytest.mark.asyncio
+async def test_poll_retries_incomplete_trailing_line(test_session, monkeypatch):
+    ingestor = LogIngestor()
+    first_line = (
+        "2026-10-26 12:54:09,765 [Thread-1] INFO  io.antmedia.Test - "
+        "First event streamId:camera-1\n"
+    )
+    second_line = (
+        "2026-10-26 12:54:10,765 [Thread-1] INFO  io.antmedia.Test - "
+        "Second event streamId:camera-1\n"
+    )
+    first_content = first_line + second_line[:30]
+    chunks = [
+        LogFileChunk(
+            logContent=first_content,
+            logContentSize=len(first_content.encode("utf-8")),
+            logFileSize=len((first_line + second_line).encode("utf-8")),
+        ),
+        LogFileChunk(
+            logContent=second_line,
+            logContentSize=len(second_line.encode("utf-8")),
+            logFileSize=len((first_line + second_line).encode("utf-8")),
+        ),
+    ]
+    requested_offsets = []
+
+    async def get_log_chunk(*, offset, **kwargs):
+        requested_offsets.append(offset)
+        return chunks[len(requested_offsets) - 1]
+
+    monkeypatch.setattr(ingestor.ams_client, "get_log_chunk", get_log_chunk)
+
+    assert await ingestor.poll_server_logs(test_session) == 1
+    assert requested_offsets == [0]
+    state = (
+        await test_session.execute(
+            select(IngestState).where(IngestState.key == "server_log_offset")
+        )
+    ).scalar_one()
+    assert state.last_offset == len(first_line.encode("utf-8"))
+
+    assert await ingestor.poll_server_logs(test_session) == 1
+    assert requested_offsets == [0, len(first_line.encode("utf-8"))]
+    logs = (await test_session.execute(select(LogEntry))).scalars().all()
+    assert len(logs) == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_log_ingestion_does_not_advance_cursor(test_session, monkeypatch):
+    ingestor = LogIngestor()
+    content = (
+        "2026-10-26 12:54:09,765 [Thread-1] INFO  io.antmedia.Test - "
+        "Incremental event streamId:camera-1\n"
+    )
+    chunk = LogFileChunk(
+        logContent=content,
+        logContentSize=len(content.encode("utf-8")),
+        logFileSize=len(content.encode("utf-8")),
+    )
+
+    async def get_log_chunk(**kwargs):
+        return chunk
+
+    original_ingest = ingestor.ingest_chunk_data
+
+    async def fail_after_ingest(entries, session):
+        await original_ingest(entries, session)
+        raise RuntimeError("simulate failure before cursor commit")
+
+    monkeypatch.setattr(ingestor.ams_client, "get_log_chunk", get_log_chunk)
+    monkeypatch.setattr(ingestor, "ingest_chunk_data", fail_after_ingest)
+
+    with pytest.raises(RuntimeError, match="simulate failure"):
+        await ingestor.poll_server_logs(test_session)
+    await test_session.rollback()
+
+    state = (
+        await test_session.execute(
+            select(IngestState).where(IngestState.key == "server_log_offset")
+        )
+    ).scalar_one()
+    logs = (await test_session.execute(select(LogEntry))).scalars().all()
+    assert state.last_offset == 0
+    assert logs == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("insert_count", [55, 105])
+async def test_ingest_preserves_logs_for_time_based_retention(test_session, insert_count):
+    ingestor = LogIngestor()
     test_session.add_all(
         [
             AmsStreamCurrent(app_name="app-one", stream_id="camera-one", status="broadcasting"),
@@ -178,9 +284,9 @@ async def test_ingest_enforces_per_app_stream_retention(
             .order_by(LogEntry.ts.desc(), LogEntry.id.desc())
         )
         logs = result.scalars().all()
-        assert len(logs) == retention_limit
+        assert len(logs) == insert_count
         assert [log.ts for log in logs] == list(
-            range(insert_count - 1, insert_count - retention_limit - 1, -1)
+            range(insert_count - 1, -1, -1)
         )
 
 

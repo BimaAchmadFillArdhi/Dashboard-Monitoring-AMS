@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 from fastapi.testclient import TestClient
 from app.main import app
 from app.clients.ams_client import AMSAPIError
-from app.clients.models import ApplicationItem, BroadcastStream
+from app.clients.models import ApplicationItem
 from app.services.application_service import ApplicationService
 
 
@@ -69,18 +69,39 @@ def test_api_app_streams_reports_ams_unavailable(monkeypatch):
     assert "atcs-kota" in resp.json()["detail"]
 
 
+def test_api_streams_preserves_pagination_metadata_and_search(monkeypatch):
+    fetch_page = AsyncMock(return_value=([{"stream_id": "camera-26"}], 61, 40, 21))
+    monkeypatch.setattr(
+        "app.api.applications_api.app_service.get_streams_for_app",
+        fetch_page,
+    )
+
+    response = TestClient(app).get(
+        "/api/applications/test-app/streams?offset=25&size=25&q=camera"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "entries": [{"stream_id": "camera-26"}],
+        "total": 61,
+        "live_count": 40,
+        "offline_count": 21,
+        "offset": 25,
+        "size": 25,
+    }
+    assert fetch_page.await_args.kwargs["offset"] == 25
+    assert fetch_page.await_args.kwargs["size"] == 25
+    assert fetch_page.await_args.kwargs["search_q"] == "camera"
+
+
 @pytest.mark.asyncio
-async def test_application_overview_counts_all_and_live_streams(monkeypatch):
-    streams = [
-        BroadcastStream(streamId=f"stream-{index}", status="broadcasting" if index % 2 else "finished")
-        for index in range(239)
-    ]
+async def test_application_overview_uses_official_ams_live_count(monkeypatch):
     ams_mock = SimpleNamespace(
         get_applications_info=AsyncMock(return_value=[
             ApplicationItem(name="test-app", liveStreamCount=999, vodCount=0, storage=0)
         ]),
         get_broadcasts_count=AsyncMock(return_value=239),
-        get_all_broadcasts=AsyncMock(return_value=streams),
+        get_all_broadcasts=AsyncMock(),
     )
     health_mock = SimpleNamespace(
         evaluate_stream_health=AsyncMock(return_value=SimpleNamespace(status="Sehat"))
@@ -91,23 +112,44 @@ async def test_application_overview_counts_all_and_live_streams(monkeypatch):
     summary = await ApplicationService().get_applications_overview(session=None)
 
     assert summary[0].stream_count == 239
-    assert summary[0].live_count == 119
-    assert ams_mock.get_all_broadcasts.await_args.kwargs["batch_size"] == 50
+    assert summary[0].live_count == 999
+    ams_mock.get_all_broadcasts.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_application_overview_does_not_convert_ams_failure_to_zero(monkeypatch):
+async def test_application_overview_cache_prevents_repeated_ams_fetches(monkeypatch):
+    ams_mock = SimpleNamespace(
+        get_applications_info=AsyncMock(return_value=[
+            ApplicationItem(name="test-app", liveStreamCount=1, vodCount=0, storage=0)
+        ]),
+        get_broadcasts_count=AsyncMock(return_value=0),
+        get_all_broadcasts=AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr("app.services.application_service.ams_client", ams_mock)
+    service = ApplicationService()
+
+    await service.get_applications_overview(session=None)
+    await service.get_applications_overview(session=None)
+
+    ams_mock.get_applications_info.assert_awaited_once()
+    ams_mock.get_broadcasts_count.assert_awaited_once_with("test-app", strict=True)
+    ams_mock.get_all_broadcasts.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_application_overview_preserves_ams_live_count_if_total_count_fails(monkeypatch):
     ams_mock = SimpleNamespace(
         get_applications_info=AsyncMock(return_value=[
             ApplicationItem(name="test-app", liveStreamCount=58, vodCount=0, storage=0)
         ]),
-        get_broadcasts_count=AsyncMock(return_value=58),
-        get_all_broadcasts=AsyncMock(side_effect=AMSAPIError("broadcast list unavailable")),
+        get_broadcasts_count=AsyncMock(side_effect=AMSAPIError("broadcast count unavailable")),
     )
     monkeypatch.setattr("app.services.application_service.ams_client", ams_mock)
 
-    with pytest.raises(AMSAPIError):
-        await ApplicationService().get_applications_overview(session=None)
+    summary = await ApplicationService().get_applications_overview(session=None)
+
+    assert summary[0].live_count == 58
+    assert summary[0].stream_count is None
 
 
 def test_applications_page_includes_stream_summary_and_fetches_pages():
@@ -116,11 +158,17 @@ def test_applications_page_includes_stream_summary_and_fetches_pages():
     assert resp.status_code == 200
     assert "selectedAppSummary.stream_count" in resp.text
     assert "selectedAppSummary.live_count" in resp.text
-    assert "const pageSize = 50" in resp.text
-    assert "this.allStreams.filter(stream" in resp.text
+    assert "streamPageSize: 25" in resp.text
+    assert "fetchStreamPage(streamPage + 1)" in resp.text
+    assert 'option value="25"' in resp.text
+    assert 'option value="50"' in resp.text
+    assert 'option value="100"' in resp.text
+    assert "streamTotal" in resp.text
     assert "appsUnavailable" in resp.text
     assert "streamsUnavailable" in resp.text
-    assert "app.live_count == null ? '— live'" in resp.text
+    assert "app.live_count != null" in resp.text
+    assert "x-text=\"app.live_count\"" in resp.text
+    assert "selectedAppSummary.live_count ?? '—'" in resp.text
     assert "Hitungan aplikasi tidak tersedia dari AMS." in resp.text
 
 
@@ -128,9 +176,12 @@ def test_api_applications_streams():
     client = TestClient(app)
     resp = client.get("/api/applications/atcs/streams")
     assert resp.status_code == 200
-    streams = resp.json()
+    payload = resp.json()
+    streams = payload["entries"]
     assert isinstance(streams, list)
     assert len(streams) > 0
+    assert payload["total"] >= len(streams)
+    assert payload["live_count"] + payload["offline_count"] == payload["total"]
 
     s0 = streams[0]
     assert "stream_id" in s0
@@ -151,7 +202,7 @@ def test_api_stream_detail_masked():
     client = TestClient(app)
     # Get first streamId from atcs
     resp_list = client.get("/api/applications/atcs/streams")
-    streams = resp_list.json()
+    streams = resp_list.json()["entries"]
     sid = streams[0]["stream_id"]
 
     resp = client.get(f"/api/applications/atcs/streams/{sid}")
@@ -172,7 +223,7 @@ def test_api_stream_detail_masked():
 def test_api_stream_history():
     client = TestClient(app)
     resp_list = client.get("/api/applications/atcs/streams")
-    streams = resp_list.json()
+    streams = resp_list.json()["entries"]
     sid = streams[0]["stream_id"]
 
     resp = client.get(f"/api/applications/atcs/streams/{sid}/history?hours=1")

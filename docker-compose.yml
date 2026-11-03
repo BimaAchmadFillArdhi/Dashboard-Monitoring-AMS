@@ -9,7 +9,6 @@ services:
       - .env
     volumes:
       - ./data:/app/data
-      - ./cctv_monitoring.db:/app/cctv_monitoring.db
     environment:
       - APP_HOST=0.0.0.0
       - APP_PORT=8000

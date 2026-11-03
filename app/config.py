@@ -1,6 +1,5 @@
-import os
 from functools import lru_cache
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,12 +15,12 @@ class Settings(BaseSettings):
     POLL_INTERVAL_SECONDS: int = 5
     LOG_RETENTION_DAYS: int = 30
     LOG_RETENTION_LIMIT: int = Field(default=100, ge=50, le=100, multiple_of=50)
-    STREAM_METRICS_INTERVAL_SECONDS: int = 5
-    METRIC_RETENTION_DAYS: int = 30
+    STREAM_METRICS_INTERVAL_SECONDS: int = 30
+    STREAM_METRICS_HISTORY_INTERVAL_SECONDS: int = 30
+    METRIC_RETENTION_DAYS: int = Field(default=7, ge=1)
 
-    # Database (MySQL Laragon by default)
-    DATABASE_URL: str = "mysql+aiomysql://root:@localhost:3306/ams_monitoring"
-    SYNC_DATABASE_URL: str = "mysql+pymysql://root:@localhost:3306/ams_monitoring"
+    # Database (MySQL only)
+    DATABASE_URL: str
 
     # App Settings
     APP_NAME: str = "CCTV Monitoring Dashboard"
@@ -30,6 +29,13 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "cctv-monitoring-super-secret-key-2026"
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def require_mysql_database(cls, value: str) -> str:
+        if not value.startswith("mysql+aiomysql://"):
+            raise ValueError("DATABASE_URL must use the MySQL aiomysql driver")
+        return value
 
     model_config = SettingsConfigDict(
         env_file=".env",

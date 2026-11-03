@@ -7,7 +7,7 @@ Dashboard monitoring CCTV operasional untuk operator non-teknis yang terintegras
 ## Fitur Utama
 
 1. **Logs (Prioritas Utama)**:
-   - Ingest log background otomatis dari AMS ke SQLite (WAL mode).
+   - Ingest log background otomatis dari AMS ke database MySQL.
    - Parser multi-baris (menggabungkan stack trace menjadi satu entri).
    - Terjemahan cerdas ke Bahasa Indonesia awam berbasis kamus aturan `rules.yaml` (hot-reload tanpa restart).
    - Deduplikasi cerdas (pengelompokan log berulang dengan hitungan kemunculan, timestamp pertama, dan terakhir).
@@ -23,8 +23,8 @@ Dashboard monitoring CCTV operasional untuk operator non-teknis yang terintegras
    - Ringkasan aplikasi AMS di bagian bawah dengan tautan langsung ke detail aplikasi.
 
 3. **Applications (Read-Only)**:
-   - Sidebar navigasi aplikasi (`atcs`, `atcs-kota`, `cctv-sekolah`, `live`, `WebRTCApp`, dll.) dengan badge jumlah CCTV bermasalah per aplikasi.
-   - Memuat seluruh halaman daftar stream AMS dan menampilkan total stream serta jumlah stream berstatus live per aplikasi; jika AMS gagal, jumlah ditandai tidak tersedia, bukan 0.
+   - Sidebar navigasi aplikasi (`atcs`, `atcs-kota`, `cctv-sekolah`, `live`, `WebRTCApp`, dll.) dengan badge jumlah live stream per aplikasi dari `applications-info` AMS.
+   - Semua status stream (live dan non-live) diambil per halaman dari snapshot MySQL, dengan pencarian server-side dan pagination 25/50/100 baris; jumlah live memakai hitungan resmi AMS. Snapshot AMS lengkap merekonsiliasi stream yang hilang tanpa menghapus histori status.
    - Tabel stream kamera: nama, stream ID, status operasional (Sehat, Perhatian, Bermasalah, Offline), bitrate, viewer, tanggal dibuat.
    - Drawer panel detail stream di sebelah kanan:
      - URL sumber RTSP yang **disamarkan kredensialnya secara ketat** (`rtsp://user:****@host:port/path`).
@@ -35,7 +35,7 @@ Dashboard monitoring CCTV operasional untuk operator non-teknis yang terintegras
 
 ## Tech Stack
 
-- **Backend**: Python 3.11+, FastAPI, httpx (async), Pydantic v2, SQLAlchemy 2.x + SQLite (WAL mode).
+- **Backend**: Python 3.11+, FastAPI, httpx (async), Pydantic v2, SQLAlchemy 2.x + MySQL.
 - **Frontend**: Jinja2 templates, Tailwind CSS (CLI v4), Alpine.js, Chart.js.
 - **Real-Time**: Server-Sent Events (SSE).
 - **Sistem Desain**: Komponen UI reusable berbasis Jinja macros di `app/templates/components/`.
@@ -64,7 +64,7 @@ AMS/
 │   │   ├── rules.yaml           # Kamus aturan terjemahan log (data, bukan kode)
 │   │   └── engine.py            # Mesin penerjemah log & hot-reloader
 │   ├── db/
-│   │   ├── session.py           # Engine SQLite WAL mode & session maker
+│   │   ├── session.py           # MySQL engine & session maker
 │   │   └── models.py            # Tabel log_entries, unmatched_patterns, ingest_states
 │   ├── api/                     # REST JSON & SSE endpoints
 │   ├── web/                     # Web routes halaman HTML
@@ -123,7 +123,14 @@ Variabel penting:
 - `AMS_PASSWORD`: Password user AMS (contoh: `wiko2026`)
 - `POLL_INTERVAL_SECONDS`: Frekuensi background ingest log (default: `5`)
 - `LOG_RETENTION_DAYS`: Durasi retensi histori log sebelum dibersihkan (default: `30`)
-- `LOG_RETENTION_LIMIT`: Maksimal log terbaru per aplikasi dan stream (`log_entries` serta riwayat perubahan status), dan per aplikasi untuk log sinkronisasi; pilih `50` atau `100` (default: `100`). Pembersihan dilakukan saat log baru disimpan dan pada cleanup harian. Log yang aplikasinya tidak dapat diidentifikasi tidak digabungkan untuk retensi stream, agar ID kamera yang sama pada aplikasi berbeda tidak saling menghapus.
+- `STREAM_METRICS_INTERVAL_SECONDS`: Interval sinkronisasi stream dari AMS (default: `30` detik).
+- `STREAM_METRICS_HISTORY_INTERVAL_SECONDS`: Interval penyimpanan histori bitrate/viewer (default: `30` detik); tampilan live tetap diperbarui terpisah.
+- `METRIC_RETENTION_DAYS`: Retensi histori metrik server dan stream (default/maksimum efektif: `7` hari untuk mempertahankan retensi yang sudah berjalan); penghapusan dilakukan bertahap.
+- Nilai yang sudah ada di `.env` mengalahkan default; sesuaikan interval sinkronisasi stream ke `30` detik setelah pembaruan bila masih memakai nilai lama.
+- `LOG_RETENTION_LIMIT`: Maksimal riwayat perubahan status per stream dan log sinkronisasi per aplikasi; pilih `50` atau `100` (default: `100`). Log monitoring utama disimpan berdasarkan `LOG_RETENTION_DAYS` (30 hari secara default), bukan dipangkas menurut jumlah per kamera.
+- Halaman log memuat 50 ringkasan terbaru, mengambil pesan teknis hanya saat detail dibuka, dan memperbarui daftar dengan ID baru setiap 10 detik. Statistik level/kategori di-cache selama 30 detik agar polling ingestion tidak memicu agregasi penuh berulang.
+
+Snapshot dashboard dan ringkasan aplikasi memakai cache singkat agar request paralel tidak memicu polling AMS berulang. Retensi membatasi pertumbuhan data, tetapi ruang fisik DB tidak selalu mengecil setelah baris dihapus; MySQL `OPTIMIZE TABLE` memerlukan backup, ruang kosong yang cukup, dan maintenance window.
 
 ### 4. Menjalankan Server
 ```bash
@@ -174,4 +181,6 @@ python tests/benchmark_1m_logs.py
 # Menjalankan container dengan docker-compose
 docker-compose up -d --build
 ```
-Aplikasi akan aktif di port 8000. Database SQLite dipersistensikan pada file `cctv_monitoring.db` di host.
+Aplikasi tersambung ke MySQL sesuai `DATABASE_URL`; database harus tersedia dan koneksi gagal tidak dialihkan ke penyimpanan lain.
+
+Pengujian yang memakai database harus menetapkan `TEST_DATABASE_URL` ke database MySQL khusus bernama dengan `test` (contoh: `mysql+aiomysql://user:password@localhost:3306/ams_monitoring_test`). Pengujian menolak URL database utama dan tidak membuat fallback penyimpanan lokal.

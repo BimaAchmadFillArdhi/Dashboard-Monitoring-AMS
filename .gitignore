@@ -32,11 +32,6 @@ htmlcov/
 node_modules/
 .npm
 
-# SQLite Databases & WAL
-*.db
-*.db-wal
-*.db-shm
-
 # Environment & Credentials
 .env
 .env.local

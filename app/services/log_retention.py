@@ -150,19 +150,35 @@ async def delete_expired_log_entries(
     cutoff_ts: int,
     commit_batches: bool = True,
 ) -> int:
+    return await delete_expired_rows(
+        session,
+        LogEntry,
+        LogEntry.ts,
+        cutoff_ts,
+        commit_batches=commit_batches,
+    )
+
+
+async def delete_expired_rows(
+    session: AsyncSession,
+    model: Any,
+    timestamp_column: InstrumentedAttribute,
+    cutoff_ts: int,
+    commit_batches: bool = True,
+) -> int:
     deleted_count = 0
     while True:
         ids_stmt = (
-            select(LogEntry.id)
-            .where(LogEntry.ts < cutoff_ts)
-            .order_by(asc(LogEntry.ts), asc(LogEntry.id))
+            select(model.id)
+            .where(timestamp_column < cutoff_ts)
+            .order_by(asc(timestamp_column), asc(model.id))
             .limit(DELETE_BATCH_SIZE)
         )
         ids = (await session.execute(ids_stmt)).scalars().all()
         if not ids:
             break
-        await session.execute(delete(LogEntry).where(LogEntry.id.in_(ids)))
+        await session.execute(delete(model).where(model.id.in_(ids)))
         deleted_count += len(ids)
-        if commit_batches:
+        if commit_batches and deleted_count:
             await session.commit()
     return deleted_count

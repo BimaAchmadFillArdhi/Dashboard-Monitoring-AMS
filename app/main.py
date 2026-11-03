@@ -1,13 +1,15 @@
 import asyncio
 import logging
+import re
 from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, text
+from sqlalchemy.engine import make_url
 
 from app.config import get_settings
-from app.db.session import init_db, AsyncSessionLocal
+from app.db.session import init_db, AsyncSessionLocal, async_engine
 from app.db.models import LogEntry
 from app.web.routes import router as web_router
 from app.api.logs_api import router as logs_api_router, log_broadcaster
@@ -15,12 +17,17 @@ from app.api.dashboard_api import router as dashboard_api_router, dashboard_broa
 from app.api.applications_api import router as applications_api_router
 from app.services.dashboard_service import get_dashboard_service
 from app.services.application_service import get_application_service
+from app.services.log_service import get_log_service
 from app.services.sync_service import get_sync_service
-from app.clients.ams_client import get_ams_client
 from app.ingest.log_ingestor import LogIngestor
 
 logger = logging.getLogger("ams.main")
 settings = get_settings()
+database_name = make_url(settings.DATABASE_URL).database or "default"
+log_ingest_lock_name = (
+    "ams_log_ingest_"
+    + re.sub(r"[^A-Za-z0-9_]", "_", database_name)[:48]
+)
 
 bg_log_task: asyncio.Task | None = None
 bg_dashboard_task: asyncio.Task | None = None
@@ -28,7 +35,6 @@ bg_stream_metrics_task: asyncio.Task | None = None
 dashboard_svc = get_dashboard_service()
 app_svc = get_application_service()
 sync_svc = get_sync_service()
-ams_cli = get_ams_client()
 
 
 async def background_log_poller():
@@ -41,41 +47,76 @@ async def background_log_poller():
 
     while True:
         try:
-            async with AsyncSessionLocal() as session:
-                # Catch up on log chunks (up to 5 chunks per polling cycle)
-                total_new_logs = 0
-                for _ in range(5):
-                    count = await ingestor.poll_server_logs(session, log_type="server")
-                    total_new_logs += count
-                    if count == 0:
-                        break
+            async with async_engine.connect() as lock_connection:
+                acquired = await lock_connection.scalar(
+                    text("SELECT GET_LOCK(:lock_name, 0)"),
+                    {"lock_name": log_ingest_lock_name},
+                )
+                if acquired == 1:
+                    try:
+                        async with AsyncSessionLocal() as session:
+                            total_new_logs = 0
+                            for _ in range(5):
+                                count = await ingestor.poll_server_logs(
+                                    session, log_type="server"
+                                )
+                                total_new_logs += count
+                                if count == 0:
+                                    break
 
-                if total_new_logs > 0:
-                    stmt = select(LogEntry).order_by(desc(LogEntry.id)).limit(min(total_new_logs, 50))
-                    res = await session.execute(stmt)
-                    new_logs = res.scalars().all()
-                    for log in reversed(new_logs):
-                        dt = datetime.fromtimestamp(log.ts / 1000)
-                        log_broadcaster.broadcast({
-                            "id": log.id,
-                            "ts": log.ts,
-                            "time_formatted": dt.strftime("%H:%M:%S"),
-                            "level": log.level,
-                            "stream_id": log.stream_id,
-                            "app_name": log.app_name,
-                            "friendly_title": log.friendly_title,
-                            "friendly_message": log.friendly_message,
-                            "action_hint": log.action_hint,
-                            "severity_group": log.severity_group,
-                            "raw_message": log.raw_message,
-                            "fingerprint": log.fingerprint,
-                        })
+                            if total_new_logs > 0:
+                                stmt = (
+                                    select(
+                                        LogEntry.id,
+                                        LogEntry.ts,
+                                        LogEntry.level,
+                                        LogEntry.logger,
+                                        LogEntry.stream_id,
+                                        LogEntry.app_name,
+                                        LogEntry.friendly_title,
+                                        LogEntry.friendly_message,
+                                        LogEntry.category,
+                                        LogEntry.action_hint,
+                                        LogEntry.severity_group,
+                                        LogEntry.fingerprint,
+                                    )
+                                    .order_by(desc(LogEntry.id))
+                                    .limit(min(total_new_logs, 50))
+                                )
+                                res = await session.execute(stmt)
+                                new_logs = res.mappings().all()
+                                for log in reversed(new_logs):
+                                    dt = datetime.fromtimestamp(log["ts"] / 1000)
+                                    log_broadcaster.broadcast({
+                                        "id": log["id"],
+                                        "ts": log["ts"],
+                                        "time_formatted": dt.strftime("%H:%M:%S"),
+                                        "level": log["level"],
+                                        "logger": log["logger"],
+                                        "stream_id": log["stream_id"],
+                                        "app_name": log["app_name"],
+                                        "friendly_title": log["friendly_title"],
+                                        "friendly_message": log["friendly_message"],
+                                        "category": log["category"],
+                                        "action_hint": log["action_hint"],
+                                        "severity_group": log["severity_group"],
+                                        "fingerprint": log["fingerprint"],
+                                    })
 
-                now = asyncio.get_event_loop().time()
-                if now - last_cleanup_time > 86400:
-                    await ingestor.cleanup_old_logs(session)
-                    await sync_svc.cleanup_old_logs(session)
-                    last_cleanup_time = now
+                            now = asyncio.get_event_loop().time()
+                            if now - last_cleanup_time > 86400:
+                                await ingestor.cleanup_old_logs(session)
+                                await sync_svc.cleanup_old_logs(session)
+                                last_cleanup_time = now
+                    finally:
+                        released = await lock_connection.scalar(
+                            text("SELECT RELEASE_LOCK(:lock_name)"),
+                            {"lock_name": log_ingest_lock_name},
+                        )
+                        if released != 1:
+                            logger.error(
+                                "[BackgroundPoller] MySQL ingestion lock was not released"
+                            )
 
         except asyncio.CancelledError:
             break
@@ -91,6 +132,7 @@ async def background_dashboard_ticker():
     logger.info("[DashboardTicker] Started metrics broadcast loop (3s interval)")
     ticks = 0
     last_metric_cleanup = 0.0
+    metric_retention_days = min(settings.METRIC_RETENTION_DAYS, 7)
 
     while True:
         try:
@@ -104,31 +146,14 @@ async def background_dashboard_ticker():
                 async with AsyncSessionLocal() as session:
                     await dashboard_svc.save_snapshot_to_history(session, snapshot)
 
-                    # Snapshot active streams for historical per-stream charts
-                    try:
-                        apps = await ams_cli.get_applications()
-                        for app_name in apps:
-                            streams = await ams_cli.get_broadcasts_list(app_name, offset=0, size=50)
-                            for s in streams:
-                                if s.status == "broadcasting":
-                                    detail = {
-                                        "status": s.status,
-                                        "bitrate": s.bitrate or 0,
-                                        "bitrate_mbps": round((s.bitrate or 0) / 1_000_000.0, 2),
-                                        "speed": round(s.speed, 2) if s.speed is not None else 0.0,
-                                        "total_viewers": s.total_viewers,
-                                        "hls_viewers": s.hlsViewerCount,
-                                        "webrtc_viewers": s.webRTCViewerCount,
-                                        "dash_viewers": s.dashViewerCount,
-                                    }
-                                    await app_svc.save_stream_metric(session, app_name, s.streamId, detail)
-                    except Exception as stream_err:
-                        logger.warning(f"[DashboardTicker] Error snapshotting active streams: {stream_err}")
-
                     now = asyncio.get_event_loop().time()
                     if now - last_metric_cleanup > 86400:
-                        await dashboard_svc.cleanup_old_metrics(session, retention_days=7)
-                        await app_svc.cleanup_old_stream_metrics(session, retention_days=7)
+                        await dashboard_svc.cleanup_old_metrics(
+                            session, retention_days=metric_retention_days
+                        )
+                        await app_svc.cleanup_old_stream_metrics(
+                            session, retention_days=metric_retention_days
+                        )
                         last_metric_cleanup = now
 
         except asyncio.CancelledError:
@@ -161,8 +186,14 @@ async def background_stream_metrics_collector():
 async def lifespan(app: FastAPI):
     # Startup: Initialize database schema
     await init_db()
-    db_type = "SQLite" if settings.DATABASE_URL.startswith("sqlite") else "MySQL"
-    print(f"[{settings.APP_NAME}] Database schema initialized successfully on {db_type}.")
+    print(f"[{settings.APP_NAME}] MySQL database schema initialized successfully.")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            await get_log_service().query_logs(session=session, limit=1)
+        logger.info("[Startup] Log statistics cache warmed.")
+    except Exception as err:
+        logger.warning(f"[Startup] Could not warm the log statistics cache: {err}")
 
     # Warm up in-memory dashboard metric buffer from database
     try:

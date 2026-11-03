@@ -1,31 +1,13 @@
 import json
 import time
+from unittest.mock import AsyncMock
 
 import pytest
-import pytest_asyncio
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.api import applications_api
-from app.db.models import Base, StreamMetricHistory
+from app.db.models import StreamMetricHistory
 from app.services.application_service import ApplicationService
-
-
-@pytest_asyncio.fixture
-async def metric_session():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    session_factory = async_sessionmaker(
-        bind=engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-    async with session_factory() as session:
-        yield session
-
-    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -64,6 +46,16 @@ async def test_history_returns_recent_metric_samples_in_ascending_time(metric_se
     assert six_hours["bitrate_mbps"][0] == 599.0
     assert six_hours["bitrate_mbps"][-1] == 0.0
     assert six_hours["viewers"][-1] == 0
+
+
+@pytest.mark.asyncio
+async def test_system_stream_history_query_returns_empty_result(metric_session):
+    history = await ApplicationService().get_system_stream_history(
+        metric_session, hours=1
+    )
+
+    assert history["points_count"] == 0
+    assert history["timestamps"] == []
 
 
 @pytest.mark.asyncio
@@ -133,15 +125,12 @@ async def test_live_sse_includes_requested_history(monkeypatch):
     async def get_detail(*args):
         return detail
 
-    async def save_metric(*args, **kwargs):
-        calls["force"] = kwargs.get("force")
-        return True
-
     async def get_history(*args, **kwargs):
         calls["hours"] = kwargs.get("hours")
         return history
 
     monkeypatch.setattr(applications_api.app_service, "get_stream_detail", get_detail)
+    save_metric = AsyncMock()
     monkeypatch.setattr(applications_api.app_service, "save_stream_metric", save_metric)
     monkeypatch.setattr(
         applications_api.app_service, "get_stream_metric_history", get_history
@@ -159,4 +148,5 @@ async def test_live_sse_includes_requested_history(monkeypatch):
     event_text = event.decode() if isinstance(event, bytes) else event
     payload = json.loads(event_text.removeprefix("data: ").strip())
     assert payload["history"] == history
-    assert calls == {"force": True, "hours": 6}
+    assert calls == {"hours": 6}
+    save_metric.assert_not_awaited()

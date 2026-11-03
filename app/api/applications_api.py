@@ -31,15 +31,23 @@ async def get_app_streams(
     q: Optional[str] = Query(None, description="Pencarian nama atau streamId"),
     session: AsyncSession = Depends(get_db_session),
 ):
-    """Fetch streams for an application with operational health status."""
+    """Fetch one MySQL-backed page of active application streams."""
     try:
-        return await app_service.get_streams_for_app(
+        entries, total, live_count, offline_count = await app_service.get_streams_for_app(
             app_name=app_name,
             session=session,
             offset=offset,
             size=size,
             search_q=q,
         )
+        return {
+            "entries": entries,
+            "total": total,
+            "live_count": live_count,
+            "offline_count": offline_count,
+            "offset": offset,
+            "size": size,
+        }
     except AMSAPIError as err:
         raise HTTPException(
             status_code=503,
@@ -106,9 +114,6 @@ async def sse_stream_drawer(
             while True:
                 detail = await app_service.get_stream_detail(app_name, stream_id, session)
                 if detail:
-                    await app_service.save_stream_metric(
-                        session, app_name, stream_id, detail, force=True
-                    )
                     history = await app_service.get_stream_metric_history(
                         session, app_name, stream_id, hours=hours
                     )

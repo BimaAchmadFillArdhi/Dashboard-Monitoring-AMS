@@ -1,16 +1,17 @@
-import re
 import time
+import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
-from sqlalchemy import select, delete, desc, asc, func
+from sqlalchemy import select, asc, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.ams_client import AMSAPIError, get_ams_client
-from app.clients.models import BroadcastStream, VoDItem, mask_rtsp_url
+from app.clients.models import BroadcastStream
 from app.db.models import AmsStreamCurrent, StreamMetricHistory
-from app.services.health_service import HealthService, StreamHealthReport
+from app.services.health_service import HealthService
+from app.services.log_retention import delete_expired_rows
 
 ams_client = get_ams_client()
 health_service = HealthService()
@@ -59,6 +60,9 @@ class ApplicationService:
     def __init__(self):
         self._last_saved_ts: Dict[str, float] = {}
         self._last_application_overview: Optional[List[AppSummaryDTO]] = None
+        self._overview_updated_at = 0.0
+        self._overview_lock = asyncio.Lock()
+        self._overview_cache_seconds = 5.0
 
     async def _get_cached_application_overview(
         self, session: AsyncSession
@@ -87,64 +91,28 @@ class ApplicationService:
                 summary.live_count += 1
         return list(grouped.values())
 
-    async def _get_cached_streams(
-        self,
-        app_name: str,
-        session: AsyncSession,
-        offset: int,
-        size: int,
-        search_q: Optional[str] = None,
-    ) -> Optional[List[BroadcastStream]]:
-        stmt = (
-            select(AmsStreamCurrent)
-            .where(
-                AmsStreamCurrent.app_name == app_name,
-                AmsStreamCurrent.status == "broadcasting",
-            )
-            .order_by(
-                AmsStreamCurrent.last_seen.desc(),
-                AmsStreamCurrent.stream_id,
-            )
-        )
-        result = await session.execute(stmt)
-        records = result.scalars().all()
-        if not records:
-            cached_app = await session.execute(
-                select(AmsStreamCurrent.stream_id)
-                .where(AmsStreamCurrent.app_name == app_name)
-                .limit(1)
-            )
-            return [] if cached_app.scalar_one_or_none() else None
-
-        streams = [
-            BroadcastStream(
-                streamId=record.stream_id,
-                name=record.name or record.stream_id,
-                status=record.status,
-                type=record.stream_type or "streamSource",
-                streamUrl=record.stream_url,
-                date=record.created_date or 0,
-                speed=record.speed,
-                bitrate=record.bitrate,
-                width=record.width,
-                height=record.height,
-                hlsViewerCount=record.hls_viewers,
-                webRTCViewerCount=record.webrtc_viewers,
-                dashViewerCount=record.dash_viewers,
-            )
-            for record in records
-        ]
-        if search_q:
-            query = search_q.lower()
-            streams = [
-                stream
-                for stream in streams
-                if query in (stream.name or "").lower()
-                or query in stream.streamId.lower()
-            ]
-        return streams[offset : offset + size]
-
     async def get_applications_overview(self, session: AsyncSession) -> List[AppSummaryDTO]:
+        if (
+            self._last_application_overview is not None
+            and time.monotonic() - self._overview_updated_at < self._overview_cache_seconds
+        ):
+            return self._last_application_overview
+
+        async with self._overview_lock:
+            if (
+                self._last_application_overview is not None
+                and time.monotonic() - self._overview_updated_at < self._overview_cache_seconds
+            ):
+                return self._last_application_overview
+
+            result = await self._refresh_applications_overview(session)
+            self._last_application_overview = result
+            self._overview_updated_at = time.monotonic()
+            return result
+
+    async def _refresh_applications_overview(
+        self, session: AsyncSession
+    ) -> List[AppSummaryDTO]:
         """Fetch AMS application stream counts, preserving the last valid snapshot."""
         try:
             apps_info = await ams_client.get_applications_info(strict=True)
@@ -152,9 +120,12 @@ class ApplicationService:
                 if self._last_application_overview:
                     logger.warning(
                         "[ApplicationService] AMS returned no application metadata; "
-                        "serving the previous overview"
+                        "serving cached applications without live counts"
                     )
-                    return self._last_application_overview
+                    return [
+                        item.model_copy(update={"live_count": None})
+                        for item in self._last_application_overview
+                    ]
                 cached = (
                     await self._get_cached_application_overview(session)
                     if session is not None
@@ -163,17 +134,23 @@ class ApplicationService:
                 if cached:
                     logger.warning(
                         "[ApplicationService] AMS returned no application metadata; "
-                        "serving the last stream snapshot"
+                        "serving the last stream snapshot without live counts"
                     )
-                    return cached
+                    return [
+                        item.model_copy(update={"live_count": None})
+                        for item in cached
+                    ]
         except AMSAPIError as err:
             if self._last_application_overview:
                 logger.warning(
                     "[ApplicationService] Unable to refresh application metadata; "
-                    "serving the previous overview: %s",
+                    "serving cached applications without live counts: %s",
                     err,
                 )
-                return self._last_application_overview
+                return [
+                    item.model_copy(update={"live_count": None})
+                    for item in self._last_application_overview
+                ]
             cached = (
                 await self._get_cached_application_overview(session)
                 if session is not None
@@ -182,10 +159,13 @@ class ApplicationService:
             if cached:
                 logger.warning(
                     "[ApplicationService] Unable to refresh application metadata; "
-                    "serving the last stream snapshot: %s",
+                    "serving the last stream snapshot without live counts: %s",
                     err,
                 )
-                return cached
+                return [
+                    item.model_copy(update={"live_count": None})
+                    for item in cached
+                ]
             raise
 
         result = []
@@ -198,42 +178,66 @@ class ApplicationService:
         previous_by_name = {
             item.name: item for item in self._last_application_overview or []
         }
-
-        for app in apps_info:
-            try:
-                expected_count = await ams_client.get_broadcasts_count(
-                    app.name, strict=True
+        problematic_by_app: Dict[str, int] = {}
+        if session is not None:
+            active_result = await session.execute(
+                select(AmsStreamCurrent).where(
+                    AmsStreamCurrent.status == "broadcasting"
                 )
-                streams = await ams_client.get_all_broadcasts(app.name, batch_size=50)
-                if len(streams) != expected_count:
-                    raise AMSAPIError(
-                        f"AMS returned an incomplete broadcast list for {app.name}"
+            )
+            active_records = active_result.scalars().all()
+            active_streams = [
+                (
+                    BroadcastStream(
+                        streamId=record.stream_id,
+                        name=record.name or record.stream_id,
+                        status=record.status,
+                        type=record.stream_type or "streamSource",
+                        streamUrl=record.stream_url,
+                        date=record.created_date or 0,
+                        speed=record.speed,
+                        bitrate=record.bitrate,
+                        width=record.width,
+                        height=record.height,
+                        hlsViewerCount=record.hls_viewers,
+                        webRTCViewerCount=record.webrtc_viewers,
+                        dashViewerCount=record.dash_viewers,
+                    ),
+                    record.app_name,
+                )
+                for record in active_records
+            ]
+            reports = await health_service.evaluate_streams_health(
+                active_streams,
+                session,
+            )
+            for report in reports:
+                if report.status in ("Bermasalah", "Perhatian"):
+                    problematic_by_app[report.app_name] = (
+                        problematic_by_app.get(report.app_name, 0) + 1
                     )
 
-                stream_count = len(streams)
-                live_count = sum(
-                    stream.status == "broadcasting" for stream in streams
+        for app in apps_info:
+            live_count = app.liveStreamCount
+            prob_count = problematic_by_app.get(app.name, 0)
+            try:
+                stream_count = await ams_client.get_broadcasts_count(
+                    app.name, strict=True
                 )
-                prob_count = 0
-                for s in streams:
-                    rep = await health_service.evaluate_stream_health(s, app.name, session)
-                    if rep.status in ("Bermasalah", "Perhatian"):
-                        prob_count += 1
             except AMSAPIError as err:
                 previous = previous_by_name.get(app.name) or cached_by_name.get(
                     app.name
                 )
                 logger.warning(
-                    "[ApplicationService] Unable to refresh streams for %s: %s",
+                    "[ApplicationService] Unable to refresh total stream count for %s; "
+                    "retaining the AMS live count: %s",
                     app.name,
                     err,
                 )
-                if previous:
+                if previous is not None:
                     stream_count = previous.stream_count
-                    live_count = previous.live_count
-                    prob_count = previous.problematic_count
                 else:
-                    raise
+                    stream_count = None
 
             result.append(AppSummaryDTO(
                 name=app.name,
@@ -254,95 +258,105 @@ class ApplicationService:
         offset: int = 0,
         size: int = 50,
         search_q: Optional[str] = None,
-    ) -> List[StreamTableRowDTO]:
-        """Fetch active AMS streams, falling back to the last complete MySQL snapshot."""
-        try:
-            expected_count = await ams_client.get_broadcasts_count(
-                app_name, strict=True
+    ) -> tuple[List[StreamTableRowDTO], int, int, int]:
+        """Return one page of all AMS streams from the latest complete MySQL snapshot."""
+        filters = [AmsStreamCurrent.app_name == app_name]
+        if search_q and search_q.strip():
+            query = search_q.strip()
+            filters.append(
+                AmsStreamCurrent.name.contains(query, autoescape=True)
+                | AmsStreamCurrent.stream_id.contains(query, autoescape=True)
             )
-            all_streams = await ams_client.get_all_broadcasts(
-                app_name, batch_size=50
-            )
-            if len(all_streams) != expected_count:
-                raise AMSAPIError(
-                    f"AMS returned {len(all_streams)} broadcasts for {app_name}, "
-                    f"but its count endpoint reports {expected_count}"
+
+        counts = (
+            await session.execute(
+                select(
+                    func.count().label("total"),
+                    func.coalesce(
+                        func.sum(
+                            case(
+                                (AmsStreamCurrent.status == "broadcasting", 1),
+                                else_=0,
+                            )
+                        ),
+                        0,
+                    ).label("live"),
                 )
-            raw_streams = [
-                stream
-                for stream in all_streams
-                if stream.status == "broadcasting"
-            ]
-            if search_q:
-                query = search_q.lower()
-                raw_streams = [
-                    stream
-                    for stream in raw_streams
-                    if query in (stream.name or "").lower()
-                    or query in stream.streamId.lower()
-                ]
-            raw_streams = raw_streams[offset : offset + size]
-        except AMSAPIError as err:
-            raw_streams = await self._get_cached_streams(
-                app_name, session, offset, size, search_q
+                .select_from(AmsStreamCurrent)
+                .where(*filters)
             )
-            if raw_streams is None:
-                logger.warning(
-                    "[ApplicationService] AMS stream request failed and no cached "
-                    "snapshot exists for %s: %s",
-                    app_name,
-                    err,
-                )
-                raise AMSAPIError(
-                    f"Stream data is temporarily unavailable for application {app_name}"
-                ) from err
-            logger.warning(
-                "[ApplicationService] Serving cached AMS streams for %s after "
-                "request failure: %s",
-                app_name,
-                err,
+        ).one()
+        total = counts.total
+        live_count = counts.live
+        offline_count = total - live_count
+        result = await session.execute(
+            select(AmsStreamCurrent)
+            .where(*filters)
+            .order_by(AmsStreamCurrent.stream_id)
+            .offset(offset)
+            .limit(size)
+        )
+        records = result.scalars().all()
+        raw_streams = [
+            BroadcastStream(
+                streamId=record.stream_id,
+                name=record.name or record.stream_id,
+                status=record.status,
+                type=record.stream_type or "streamSource",
+                streamUrl=record.stream_url,
+                date=record.created_date or 0,
+                speed=record.speed,
+                bitrate=record.bitrate,
+                width=record.width,
+                height=record.height,
+                hlsViewerCount=record.hls_viewers,
+                webRTCViewerCount=record.webrtc_viewers,
+                dashViewerCount=record.dash_viewers,
+                mp4Enabled=0,
             )
+            for record in records
+        ]
+        health_reports = await health_service.evaluate_streams_health(
+            [(stream, app_name) for stream in raw_streams],
+            session,
+        )
+        health_by_id = {report.stream_id: report for report in health_reports}
 
         rows = []
-
-        for s in raw_streams:
-            if search_q:
-                q = search_q.lower()
-                name = (s.name or "").lower()
-                sid = (s.streamId or "").lower()
-                if q not in name and q not in sid:
-                    continue
-
-            # Evaluate health
-            rep = await health_service.evaluate_stream_health(s, app_name, session)
-
-            # Date formatted
-            from datetime import datetime
+        for stream in raw_streams:
+            report = health_by_id[stream.streamId]
             date_str = "-"
-            if s.date and s.date > 0:
+            if stream.date > 0:
                 try:
-                    date_str = datetime.fromtimestamp(s.date / 1000).strftime("%Y-%m-%d %H:%M")
-                except Exception:
-                    pass
+                    date_str = datetime.fromtimestamp(
+                        stream.date / 1000
+                    ).strftime("%Y-%m-%d %H:%M")
+                except (OverflowError, OSError, ValueError):
+                    logger.warning(
+                        "Invalid creation timestamp for stream %s",
+                        stream.streamId,
+                    )
 
-            rows.append(StreamTableRowDTO(
-                stream_id=s.streamId,
-                name=s.name or s.streamId,
-                status=s.status,
-                health_status=rep.status,
-                health_tone=rep.tone,
-                problem_summary=rep.problem_summary,
-                stream_type=s.type,
-                masked_url=s.masked_url,
-                bitrate=s.bitrate,
-                speed=s.speed,
-                total_viewers=s.total_viewers,
-                resolution_str=s.resolution_str,
-                created_date_formatted=date_str,
-                mp4_enabled=bool(s.mp4Enabled),
-            ))
+            rows.append(
+                StreamTableRowDTO(
+                    stream_id=stream.streamId,
+                    name=stream.name or stream.streamId,
+                    status=stream.status,
+                    health_status=report.status,
+                    health_tone=report.tone,
+                    problem_summary=report.problem_summary,
+                    stream_type=stream.type,
+                    masked_url=stream.masked_url,
+                    bitrate=stream.bitrate,
+                    speed=stream.speed,
+                    total_viewers=stream.total_viewers,
+                    resolution_str=stream.resolution_str,
+                    created_date_formatted=date_str,
+                    mp4_enabled=bool(stream.mp4Enabled),
+                )
+            )
 
-        return rows
+        return rows, total, live_count, offline_count
 
     async def get_vods_for_app(
         self,
@@ -651,11 +665,17 @@ class ApplicationService:
 
     async def cleanup_old_stream_metrics(self, session: AsyncSession, retention_days: int = 7) -> int:
         """Purge stream metric history older than retention policy."""
+        if retention_days <= 0:
+            return 0
         cutoff_ms = int((time.time() - (retention_days * 86400)) * 1000)
-        stmt = delete(StreamMetricHistory).where(StreamMetricHistory.ts < cutoff_ms)
-        res = await session.execute(stmt)
+        deleted = await delete_expired_rows(
+            session,
+            StreamMetricHistory,
+            StreamMetricHistory.ts,
+            cutoff_ms,
+        )
         await session.commit()
-        return res.rowcount
+        return deleted
 
 
 

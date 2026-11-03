@@ -375,25 +375,49 @@ class AMSClient:
             ) from err
 
     async def get_all_broadcasts(
-        self, app_name: str, batch_size: int = 50, max_pages: int = 100
+        self,
+        app_name: str,
+        batch_size: int = 50,
+        max_pages: Optional[int] = None,
+        expected_count: Optional[int] = None,
     ) -> List[BroadcastStream]:
-        """Fetch all broadcasts until AMS returns an empty or partial page."""
-        if batch_size < 1 or max_pages < 1:
+        """Fetch a complete broadcast snapshot, validating it when count is known."""
+        if batch_size < 1 or (max_pages is not None and max_pages < 1):
             raise ValueError("batch_size and max_pages must be at least 1")
+        if expected_count is not None and expected_count < 0:
+            raise ValueError("expected_count must not be negative")
+        if expected_count == 0:
+            return []
 
         all_streams: List[BroadcastStream] = []
         offset = 0
         seen_ids = set()
+        page_limit = max_pages or expected_count or 100
 
-        for _ in range(max_pages):
+        for _ in range(page_limit):
+            requested_size = (
+                min(batch_size, expected_count - offset)
+                if expected_count is not None
+                else batch_size
+            )
             batch = await self.get_broadcasts_list(
                 app_name,
                 offset=offset,
-                size=batch_size,
+                size=requested_size,
                 strict=True,
             )
             if not batch:
+                if expected_count is not None and len(seen_ids) != expected_count:
+                    raise AMSAPIError(
+                        f"AMS ended pagination for {app_name} after {len(seen_ids)} "
+                        f"unique broadcasts; expected {expected_count}"
+                    )
                 return all_streams
+            if len(batch) > requested_size:
+                raise AMSAPIError(
+                    f"AMS returned {len(batch)} broadcasts for {app_name} "
+                    f"when at most {requested_size} were requested"
+                )
 
             new_items_found = False
             for s in batch:
@@ -402,7 +426,14 @@ class AMSClient:
                     all_streams.append(s)
                     new_items_found = True
 
-            if len(batch) < batch_size:
+            if expected_count is not None and len(seen_ids) == expected_count:
+                return all_streams
+            if expected_count is not None and len(seen_ids) > expected_count:
+                raise AMSAPIError(
+                    f"AMS returned more unique broadcasts for {app_name} "
+                    f"than its reported count of {expected_count}"
+                )
+            if expected_count is None and len(batch) < batch_size:
                 return all_streams
 
             offset += len(batch)
@@ -412,8 +443,9 @@ class AMSClient:
                 )
 
         raise AMSAPIError(
-            f"AMS broadcast pagination for {app_name} reached max_pages={max_pages} "
-            f"without an empty or partial page (next offset={offset})"
+            f"AMS broadcast pagination for {app_name} reached "
+            f"max_pages={page_limit} with {len(seen_ids)} unique broadcasts "
+            f"(expected {expected_count if expected_count is not None else 'unknown'})"
         )
 
     async def get_all_vods(

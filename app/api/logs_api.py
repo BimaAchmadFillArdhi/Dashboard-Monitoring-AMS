@@ -1,19 +1,25 @@
 import json
 import asyncio
-from typing import Optional, List, Set
-from fastapi import APIRouter, Depends, Query, Response
+import time
+from typing import Optional, Set
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
-from app.services.log_service import get_log_service, LogItemDTO
+from app.services.log_service import get_log_service
 from app.services.health_service import HealthService
-from app.clients.ams_client import get_ams_client
+from app.clients.models import BroadcastStream
+from app.db.models import AmsStreamCurrent
 
 router = APIRouter(prefix="/api/logs", tags=["Logs API"])
 log_service = get_log_service()
 health_service = HealthService()
-ams_client = get_ams_client()
+_problematic_cache: list[dict] = []
+_problematic_cache_at = 0.0
+_problematic_cache_lock = asyncio.Lock()
+PROBLEMATIC_CACHE_SECONDS = 15
 
 
 # SSE Broadcaster for real-time live log tailing
@@ -34,7 +40,12 @@ class LogBroadcaster:
             try:
                 q.put_nowait(log_dict)
             except asyncio.QueueFull:
-                pass
+                while not q.empty():
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                q.put_nowait({"_refresh": True})
 
 
 log_broadcaster = LogBroadcaster()
@@ -49,12 +60,12 @@ async def get_logs(
     q: Optional[str] = Query(None, description="Pencarian kata kunci"),
     fingerprint: Optional[str] = Query(None, description="Filter kejadian grup fingerprint"),
     dedupe: bool = Query(False, description="Gabungkan log berulang"),
-    cursor: Optional[int] = Query(None, description="ID log terakhir untuk paginasi"),
+    cursor: Optional[int] = Query(None, ge=1, description="ID log terakhir untuk paginasi"),
     limit: int = Query(50, ge=1, le=100),
     session: AsyncSession = Depends(get_db_session),
 ):
-    """Query logs with filters, date selection, deduplication, and level counts."""
-    return await log_service.query_logs(
+    """Return one bounded page of log summaries and cached aggregate counts."""
+    result = await log_service.query_logs(
         session=session,
         date_str=date,
         level=level,
@@ -66,12 +77,42 @@ async def get_logs(
         cursor_id=cursor,
         limit=limit,
     )
+    return result.model_dump(exclude_none=True)
 
 
 @router.get("/filters")
 async def get_log_filters(session: AsyncSession = Depends(get_db_session)):
     """Fetch available stream IDs and applications for search filter dropdowns."""
     return await log_service.get_filter_options(session)
+
+
+@router.get("/updates")
+async def get_log_updates(
+    after_id: int = Query(0, ge=0),
+    date: Optional[str] = Query(None),
+    level: Optional[str] = Query(None),
+    stream_id: Optional[str] = Query(None),
+    app_name: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+    fingerprint: Optional[str] = Query(None),
+    dedupe: bool = Query(False),
+    limit: int = Query(50, ge=1, le=100),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Fetch only log IDs created after the client's last observed record."""
+    result = await log_service.query_logs(
+        session=session,
+        date_str=date,
+        level=level,
+        stream_id=stream_id,
+        app_name=app_name,
+        search_q=q,
+        fingerprint=fingerprint,
+        dedupe=dedupe,
+        after_id=after_id,
+        limit=limit,
+    )
+    return result.model_dump(exclude_none=True)
 
 
 @router.get("/export.csv")
@@ -102,27 +143,54 @@ async def export_logs_csv(
 async def get_problematic_cctv(
     session: AsyncSession = Depends(get_db_session),
 ):
-    """Get list of CCTV streams ranked by issue severity."""
-    # Fetch streams from atcs and atcs-kota
-    all_streams = []
-    for app in ["atcs", "atcs-kota", "cctv-sekolah"]:
-        try:
-            streams = await ams_client.get_broadcasts_list(app, offset=0, size=100)
-            for s in streams:
-                all_streams.append((s, app))
-        except Exception:
-            pass
+    """Rank problematic CCTV using the periodically synchronized MySQL snapshot."""
+    global _problematic_cache_at, _problematic_cache
+    if time.monotonic() - _problematic_cache_at < PROBLEMATIC_CACHE_SECONDS:
+        return _problematic_cache
 
-    problematic = []
-    for s, app in all_streams:
-        rep = await health_service.evaluate_stream_health(s, app, session)
-        if rep.status in ("Bermasalah", "Perhatian"):
-            problematic.append(rep)
+    async with _problematic_cache_lock:
+        if time.monotonic() - _problematic_cache_at < PROBLEMATIC_CACHE_SECONDS:
+            return _problematic_cache
 
-    problematic.sort(
-        key=lambda x: (0 if x.status == "Bermasalah" else 1, -x.total_events, -x.last_event_ts)
-    )
-    return problematic
+        result = await session.execute(
+            select(
+                AmsStreamCurrent.app_name,
+                AmsStreamCurrent.stream_id,
+                AmsStreamCurrent.status,
+                AmsStreamCurrent.bitrate,
+            ).where(
+                AmsStreamCurrent.app_name.in_(
+                    ["atcs", "atcs-kota", "cctv-sekolah"]
+                )
+            )
+        )
+        streams = [
+            (
+                BroadcastStream(
+                    streamId=row.stream_id,
+                    status=row.status,
+                    bitrate=row.bitrate,
+                ),
+                row.app_name,
+            )
+            for row in result
+        ]
+        reports = await health_service.evaluate_streams_health(streams, session)
+        problematic = [
+            report
+            for report in reports
+            if report.status in ("Bermasalah", "Perhatian")
+        ]
+        problematic.sort(
+            key=lambda report: (
+                0 if report.status == "Bermasalah" else 1,
+                -report.total_events,
+                -report.last_event_ts,
+            )
+        )
+        _problematic_cache = [report.model_dump() for report in problematic]
+        _problematic_cache_at = time.monotonic()
+        return _problematic_cache
 
 
 @router.get("/live-sse")
@@ -138,6 +206,9 @@ async def sse_live_logs():
                 # Wait for new log event from broadcaster with timeout for heartbeat
                 try:
                     log_item = await asyncio.wait_for(q.get(), timeout=15.0)
+                    if log_item.get("_refresh"):
+                        yield f"data: {json.dumps({'type': 'refresh'})}\n\n"
+                        continue
                     yield f"data: {json.dumps({'type': 'log', 'data': log_item})}\n\n"
                 except asyncio.TimeoutError:
                     # Heartbeat comment to keep connection alive
@@ -156,3 +227,15 @@ async def sse_live_logs():
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/{log_id}")
+async def get_log_detail(
+    log_id: int,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Load technical log content only when the user expands a row."""
+    detail = await log_service.get_log_detail(session, log_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Log tidak ditemukan")
+    return detail
