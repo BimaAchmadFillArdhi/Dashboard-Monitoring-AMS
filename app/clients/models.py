@@ -1,6 +1,6 @@
 import re
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class AMSVersion(BaseModel):
@@ -154,14 +154,18 @@ def mask_rtsp_url(url: Optional[str]) -> str:
 
 
 class BroadcastStream(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="allow")
     streamId: str
     name: Optional[str] = None
     status: str = "finished"  # broadcasting, created, finished
     type: str = "streamSource"
     streamUrl: Optional[str] = None
-    originAdress: Optional[str] = None
+    originAddress: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("originAddress", "originAdress"),
+    )
     date: int = 0
+    creationDate: Optional[int] = None
     speed: float = 0.0
     bitrate: int = 0
     width: int = 0
@@ -172,6 +176,24 @@ class BroadcastStream(BaseModel):
     mp4Enabled: int = 0
     webMEnabled: int = 0
     autoStartStopEnabled: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_broadcast_fields(cls, data):
+        if not isinstance(data, dict):
+            return data
+
+        data = dict(data)
+        if data.get("date") is None and data.get("creationDate") is not None:
+            data["date"] = data["creationDate"]
+        if data.get("creationDate") is None and data.get("date") is not None:
+            data["creationDate"] = data["date"]
+        return data
+
+    @property
+    def originAdress(self) -> Optional[str]:
+        """Retain compatibility with AMS's misspelled originAdress response field."""
+        return self.originAddress
 
     @property
     def masked_url(self) -> str:

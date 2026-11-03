@@ -11,6 +11,10 @@ from app.config import get_settings
 from app.db.models import LogEntry, UnmatchedPattern, IngestState
 from app.clients.ams_client import get_ams_client
 from app.translator.engine import get_translator
+from app.services.log_retention import (
+    delete_expired_log_entries,
+    retain_log_entries,
+)
 
 logger = logging.getLogger("ams.ingestor")
 
@@ -165,7 +169,7 @@ class LogIngestor:
     async def ingest_chunk_data(
         self, entries: List[RawLogEntry], session: AsyncSession
     ) -> int:
-        """Translate parsed entries and batch insert into SQLite database."""
+        """Translate parsed entries and batch insert into the configured database."""
         if not entries:
             return 0
 
@@ -176,8 +180,15 @@ class LogIngestor:
         from app.db.models import AmsStreamCurrent
         stmt_map = select(AmsStreamCurrent.stream_id, AmsStreamCurrent.app_name)
         res_map = await session.execute(stmt_map)
-        stream_records = res_map.all()
-        stream_map = dict(stream_records)
+        stream_owners: Dict[str, set[str]] = {}
+        for stream_id, app_name in res_map.all():
+            if stream_id and app_name:
+                stream_owners.setdefault(stream_id, set()).add(app_name)
+        stream_map = {
+            stream_id: next(iter(app_names))
+            for stream_id, app_names in stream_owners.items()
+            if len(app_names) == 1
+        }
 
         for e in entries:
             stream_id = extract_stream_id(e.raw_message)
@@ -235,6 +246,17 @@ class LogIngestor:
                 )
                 session.add(up)
 
+        await session.flush()
+        affected_groups = {
+            (entry.app_name, entry.stream_id)
+            for entry in db_entries
+            if entry.stream_id
+        }
+        await retain_log_entries(
+            session,
+            self.settings.LOG_RETENTION_LIMIT,
+            groups=list(affected_groups),
+        )
         await session.commit()
         return len(db_entries)
 
@@ -289,16 +311,25 @@ class LogIngestor:
         return ingested_count
 
     async def cleanup_old_logs(self, session: AsyncSession) -> int:
-        """Purge logs older than LOG_RETENTION_DAYS."""
+        """Enforce per-stream log limits and purge expired logs in small batches."""
+        deleted_count = await retain_log_entries(
+            session,
+            self.settings.LOG_RETENTION_LIMIT,
+            commit_batches=True,
+        )
+
         retention_days = self.settings.LOG_RETENTION_DAYS
         if retention_days <= 0:
-            return 0
+            await session.commit()
+            return deleted_count
 
         cutoff_ts = int((time.time() - (retention_days * 86400)) * 1000)
-        stmt = delete(LogEntry).where(LogEntry.ts < cutoff_ts)
-        res = await session.execute(stmt)
-        deleted_count = res.rowcount
+        deleted_count += await delete_expired_log_entries(session, cutoff_ts)
+
         await session.commit()
         if deleted_count > 0:
-            logger.info(f"[LogIngestor] Deleted {deleted_count} log entries older than {retention_days} days.")
+            logger.info(
+                f"[LogIngestor] Retained at most {self.settings.LOG_RETENTION_LIMIT} "
+                f"logs per app/stream and deleted {deleted_count} excess or expired entries."
+            )
         return deleted_count

@@ -15,6 +15,7 @@ from app.api.dashboard_api import router as dashboard_api_router, dashboard_broa
 from app.api.applications_api import router as applications_api_router
 from app.services.dashboard_service import get_dashboard_service
 from app.services.application_service import get_application_service
+from app.services.sync_service import get_sync_service
 from app.clients.ams_client import get_ams_client
 from app.ingest.log_ingestor import LogIngestor
 from app.services.whatsapp_notifier import WhatsAppNotifier
@@ -33,6 +34,7 @@ bg_stream_metrics_task: asyncio.Task | None = None
 bg_whatsapp_report_task: asyncio.Task | None = None
 dashboard_svc = get_dashboard_service()
 app_svc = get_application_service()
+sync_svc = get_sync_service()
 ams_cli = get_ams_client()
 whatsapp_notifier = WhatsAppNotifier()
 
@@ -80,6 +82,7 @@ async def background_log_poller():
                 now = asyncio.get_event_loop().time()
                 if now - last_cleanup_time > 86400:
                     await ingestor.cleanup_old_logs(session)
+                    await sync_svc.cleanup_old_logs(session)
                     last_cleanup_time = now
 
         except asyncio.CancelledError:
@@ -145,7 +148,7 @@ async def background_dashboard_ticker():
 
 
 async def background_stream_metrics_collector():
-    """Background task polling all AMS stream metrics every 5s and persisting to SQLite."""
+    """Background task polling all AMS stream metrics and persisting to the configured database."""
     await asyncio.sleep(2.0)
     interval = settings.STREAM_METRICS_INTERVAL_SECONDS
     logger.info(f"[StreamCollector] Started background stream metrics collector loop ({interval}s interval)")

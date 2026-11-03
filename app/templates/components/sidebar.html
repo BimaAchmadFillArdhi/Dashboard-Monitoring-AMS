@@ -145,15 +145,22 @@
                 </div>
 
                 <!-- Tree List in Flyout -->
+                <div x-show="$store.sidebar.appsUnavailable" role="status"
+                    class="px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">
+                    Hitungan aplikasi tidak tersedia dari AMS.
+                </div>
                 <div
                     class="relative ml-2 pl-3 border-l border-[var(--sidebar-tree-line)] max-h-56 overflow-y-auto scrollbar-thin py-0.5 space-y-0.5">
                     <template x-for="app in $store.sidebar.filteredApps" :key="app.name">
                         <div class="relative group">
                             <span class="absolute -left-3 top-1/2 w-2.5 h-[1px] bg-[var(--sidebar-tree-line)]"></span>
                             <button type="button" @click="$store.sidebar.selectApp(app.name)"
+                                @mouseenter="$store.sidebar.handleAppMouseEnter($event, app.name)"
+                                @mousemove="$store.sidebar.handleAppMouseMove($event)"
+                                @mouseleave="$store.sidebar.handleAppMouseLeave()"
                                 class="w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg transition-colors text-left cursor-pointer"
                                 :class="$store.sidebar.selectedApp === app.name ? 'bg-[var(--sidebar-active)] font-semibold text-[var(--sidebar-text)]' : 'text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover)] font-medium'">
-                                <div class="flex items-center gap-2 truncate min-w-0">
+                                <div class="flex items-center gap-2 truncate min-w-0 flex-1">
                                     <svg class="w-3.5 h-3.5 flex-shrink-0 text-[var(--sidebar-text)] opacity-80"
                                         viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
@@ -161,14 +168,11 @@
                                     </svg>
                                     <span class="truncate" x-text="app.name"></span>
                                 </div>
-                                <div class="flex items-center gap-1 flex-shrink-0 ml-1.5">
-                                    <template x-if="app.problematic_count > 0">
-                                        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium"
-                                              x-text="app.problematic_count + ' bermasalah'"></span>
-                                    </template>
-                                    <span class="text-[10px] font-mono text-[var(--text-muted)]"
-                                        x-text="(app.live_count || 0) + ' live'"></span>
-                                </div>
+                                <template x-if="app.problematic_count > 0">
+                                    <span
+                                        class="ml-2 flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium leading-none"
+                                        x-text="app.problematic_count"></span>
+                                </template>
                             </button>
                         </div>
                     </template>
@@ -214,6 +218,10 @@
                 </div>
 
                 <!-- Tree List of All Apps -->
+                <div x-show="$store.sidebar.appsUnavailable" role="status"
+                    class="px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">
+                    Hitungan aplikasi tidak tersedia dari AMS.
+                </div>
                 <div
                     class="relative ml-4 pl-3 border-l border-[var(--sidebar-tree-line)] max-h-60 overflow-y-auto scrollbar-thin py-0.5 space-y-0.5">
                     <template x-for="app in $store.sidebar.filteredApps" :key="app.name">
@@ -221,10 +229,13 @@
                             <!-- Tree horizontal branch line -->
                             <span class="absolute -left-3 top-1/2 w-2.5 h-[1px] bg-[var(--sidebar-tree-line)]"></span>
                             <button type="button" @click="$store.sidebar.selectApp(app.name)"
+                                @mouseenter="$store.sidebar.handleAppMouseEnter($event, app.name)"
+                                @mousemove="$store.sidebar.handleAppMouseMove($event)"
+                                @mouseleave="$store.sidebar.handleAppMouseLeave()"
                                 :aria-current="$store.sidebar.selectedApp === app.name ? 'page' : null"
                                 class="w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg transition-colors text-left cursor-pointer focus:outline-none focus:ring-1 focus:ring-[var(--border-color)]"
                                 :class="$store.sidebar.selectedApp === app.name ? 'bg-[var(--sidebar-active)] font-semibold text-[var(--sidebar-text)]' : 'text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover)] font-medium'">
-                                <div class="flex items-center gap-2 truncate min-w-0">
+                                <div class="flex items-center gap-2 truncate min-w-0 flex-1">
                                     <svg class="w-3.5 h-3.5 flex-shrink-0 text-[var(--sidebar-text)] opacity-80"
                                         viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                         stroke-linecap="round" stroke-linejoin="round">
@@ -233,14 +244,11 @@
                                     </svg>
                                     <span class="truncate" x-text="app.name"></span>
                                 </div>
-                                <div class="flex items-center gap-1.5 flex-shrink-0 ml-1.5">
-                                    <template x-if="app.problematic_count > 0">
-                                        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium"
-                                              x-text="app.problematic_count + ' bermasalah'"></span>
-                                    </template>
-                                    <span class="text-[10px] font-mono text-[var(--text-muted)]"
-                                        x-text="(app.live_count || 0) + ' live'"></span>
-                                </div>
+                                <template x-if="app.problematic_count > 0">
+                                    <span
+                                        class="ml-2 flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium leading-none"
+                                        x-text="app.problematic_count"></span>
+                                </template>
                             </button>
                         </div>
                     </template>
@@ -380,15 +388,22 @@
                     </button>
                 </div>
 
+                <div x-show="$store.sidebar.appsUnavailable" role="status"
+                    class="px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">
+                    Hitungan aplikasi tidak tersedia dari AMS.
+                </div>
                 <div
                     class="relative ml-4 pl-3 border-l border-[var(--sidebar-tree-line)] max-h-56 overflow-y-auto scrollbar-thin py-0.5 space-y-0.5">
                     <template x-for="app in $store.sidebar.filteredApps" :key="app.name">
                         <div class="relative">
                             <span class="absolute -left-3 top-1/2 w-2.5 h-[1px] bg-[var(--sidebar-tree-line)]"></span>
                             <button type="button" @click="$store.sidebar.selectApp(app.name)"
+                                @mouseenter="$store.sidebar.handleAppMouseEnter($event, app.name)"
+                                @mousemove="$store.sidebar.handleAppMouseMove($event)"
+                                @mouseleave="$store.sidebar.handleAppMouseLeave()"
                                 class="w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg transition-colors text-left"
                                 :class="$store.sidebar.selectedApp === app.name ? 'bg-[var(--sidebar-active)] font-semibold text-[var(--sidebar-text)]' : 'text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover)] font-medium'">
-                                <div class="flex items-center gap-2 truncate">
+                                <div class="flex items-center gap-2 truncate min-w-0 flex-1">
                                     <svg class="w-3.5 h-3.5 flex-shrink-0 text-[var(--sidebar-text)] opacity-80"
                                         viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
@@ -396,14 +411,11 @@
                                     </svg>
                                     <span class="truncate" x-text="app.name"></span>
                                 </div>
-                                <div class="flex items-center gap-1.5 flex-shrink-0 ml-1.5">
-                                    <template x-if="app.problematic_count > 0">
-                                        <span class="text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium"
-                                              x-text="app.problematic_count + ' bermasalah'"></span>
-                                    </template>
-                                    <span class="text-[10px] font-mono text-[var(--text-muted)]"
-                                        x-text="(app.live_count || 0) + ' live'"></span>
-                                </div>
+                                <template x-if="app.problematic_count > 0">
+                                    <span
+                                        class="ml-2 flex-shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border badge-danger font-medium leading-none"
+                                        x-text="app.problematic_count"></span>
+                                </template>
                             </button>
                         </div>
                     </template>
@@ -484,5 +496,15 @@
             </div>
         </div>
     </div>
+</div>
+
+<!-- Floating Tooltip for Truncated Sidebar App Names -->
+<div id="sidebar-app-tooltip" x-show="$store.sidebar.tooltip.visible"
+    x-transition:enter="transition-opacity duration-150 ease-out" x-transition:enter-start="opacity-0"
+    x-transition:enter-end="opacity-100" x-transition:leave="transition-opacity duration-100 ease-in"
+    x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0" style="display: none;" role="tooltip"
+    class="pointer-events-none fixed z-[9999] px-2.5 py-1 text-xs font-medium rounded-lg bg-[var(--sidebar-text)] text-[var(--sidebar-bg)] shadow-md whitespace-nowrap"
+    :style="`left: ${$store.sidebar.tooltip.x}px; top: ${$store.sidebar.tooltip.y}px;`"
+    x-text="$store.sidebar.tooltip.text">
 </div>
 {% endmacro %}

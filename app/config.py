@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +15,7 @@ class Settings(BaseSettings):
     # Background Poller and Log Ingestor
     POLL_INTERVAL_SECONDS: int = 5
     LOG_RETENTION_DAYS: int = 30
+    LOG_RETENTION_LIMIT: int = Field(default=100, ge=50, le=100, multiple_of=50)
     STREAM_METRICS_INTERVAL_SECONDS: int = 5
     METRIC_RETENTION_DAYS: int = 30
 

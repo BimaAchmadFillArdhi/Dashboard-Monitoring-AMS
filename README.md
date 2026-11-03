@@ -24,6 +24,7 @@ Dashboard monitoring CCTV operasional untuk operator non-teknis yang terintegras
 
 3. **Applications (Read-Only)**:
    - Sidebar navigasi aplikasi (`atcs`, `atcs-kota`, `cctv-sekolah`, `live`, `WebRTCApp`, dll.) dengan badge jumlah CCTV bermasalah per aplikasi.
+   - Memuat seluruh halaman daftar stream AMS dan menampilkan total stream serta jumlah stream berstatus live per aplikasi; jika AMS gagal, jumlah ditandai tidak tersedia, bukan 0.
    - Tabel stream kamera: nama, stream ID, status operasional (Sehat, Perhatian, Bermasalah, Offline), bitrate, viewer, tanggal dibuat.
    - Drawer panel detail stream di sebelah kanan:
      - URL sumber RTSP yang **disamarkan kredensialnya secara ketat** (`rtsp://user:****@host:port/path`).
@@ -122,6 +123,7 @@ Variabel penting:
 - `AMS_PASSWORD`: Password user AMS (contoh: `wiko2026`)
 - `POLL_INTERVAL_SECONDS`: Frekuensi background ingest log (default: `5`)
 - `LOG_RETENTION_DAYS`: Durasi retensi histori log sebelum dibersihkan (default: `30`)
+- `LOG_RETENTION_LIMIT`: Maksimal log terbaru per aplikasi dan stream (`log_entries` serta riwayat perubahan status), dan per aplikasi untuk log sinkronisasi; pilih `50` atau `100` (default: `100`). Pembersihan dilakukan saat log baru disimpan dan pada cleanup harian. Log yang aplikasinya tidak dapat diidentifikasi tidak digabungkan untuk retensi stream, agar ID kamera yang sama pada aplikasi berbeda tidak saling menghapus.
 
 ### Notifikasi Error CCTV ke WhatsApp
 

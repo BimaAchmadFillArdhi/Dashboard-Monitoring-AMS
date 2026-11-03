@@ -49,6 +49,7 @@ class HealthService:
                 func.max(LogEntry.ts).label("max_ts"),
             )
             .where(
+                LogEntry.app_name == app_name,
                 LogEntry.stream_id == stream_id,
                 LogEntry.ts >= t_60m_ago,
                 LogEntry.level.in_(["ERROR", "WARN"]),
@@ -77,6 +78,7 @@ class HealthService:
                 func.count(LogEntry.id).label("cnt"),
             )
             .where(
+                LogEntry.app_name == app_name,
                 LogEntry.stream_id == stream_id,
                 LogEntry.ts >= t_5m_ago,
                 LogEntry.level.in_(["ERROR", "WARN"]),
@@ -101,6 +103,7 @@ class HealthService:
             stmt_latest = (
                 select(LogEntry.friendly_title, LogEntry.friendly_message, LogEntry.action_hint)
                 .where(
+                    LogEntry.app_name == app_name,
                     LogEntry.stream_id == stream_id,
                     LogEntry.level.in_(["ERROR", "WARN"]),
                 )

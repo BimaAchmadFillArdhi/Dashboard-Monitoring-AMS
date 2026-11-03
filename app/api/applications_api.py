@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
+from app.clients.ams_client import AMSAPIError
 from app.services.application_service import get_application_service
 
 router = APIRouter(prefix="/api/applications", tags=["Applications API"])
@@ -16,7 +17,10 @@ app_service = get_application_service()
 @router.get("")
 async def get_applications(session: AsyncSession = Depends(get_db_session)):
     """Fetch all applications with stream counts and problematic badges."""
-    return await app_service.get_applications_overview(session)
+    try:
+        return await app_service.get_applications_overview(session)
+    except AMSAPIError as err:
+        raise HTTPException(status_code=503, detail="Data aplikasi tidak tersedia dari AMS") from err
 
 
 @router.get("/{app_name}/streams")
@@ -28,13 +32,19 @@ async def get_app_streams(
     session: AsyncSession = Depends(get_db_session),
 ):
     """Fetch streams for an application with operational health status."""
-    return await app_service.get_streams_for_app(
-        app_name=app_name,
-        session=session,
-        offset=offset,
-        size=size,
-        search_q=q,
-    )
+    try:
+        return await app_service.get_streams_for_app(
+            app_name=app_name,
+            session=session,
+            offset=offset,
+            size=size,
+            search_q=q,
+        )
+    except AMSAPIError as err:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Daftar stream aplikasi {app_name} tidak tersedia dari AMS",
+        ) from err
 
 
 @router.get("/{app_name}/vods")
@@ -87,16 +97,21 @@ async def get_stream_history(
 async def sse_stream_drawer(
     app_name: str,
     stream_id: str,
+    hours: int = Query(1, ge=1, le=24, description="Rentang histori dalam jam"),
     session: AsyncSession = Depends(get_db_session),
 ):
-    """SSE endpoint to stream live bitrate, speed, and viewer count while drawer is open."""
+    """Stream current values and the selected time range of persisted metrics."""
     async def event_generator():
         try:
             while True:
                 detail = await app_service.get_stream_detail(app_name, stream_id, session)
                 if detail:
-                    # Persist metric snapshot periodically to SQLite
-                    await app_service.save_stream_metric(session, app_name, stream_id, detail)
+                    await app_service.save_stream_metric(
+                        session, app_name, stream_id, detail, force=True
+                    )
+                    history = await app_service.get_stream_metric_history(
+                        session, app_name, stream_id, hours=hours
+                    )
 
                     payload = {
                         "stream_id": stream_id,
@@ -112,6 +127,7 @@ async def sse_stream_drawer(
                         "health_status": detail["health_status"],
                         "health_tone": detail["health_tone"],
                         "timestamp": datetime.now().strftime("%H:%M:%S"),
+                        "history": history,
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
                 await asyncio.sleep(2.0)

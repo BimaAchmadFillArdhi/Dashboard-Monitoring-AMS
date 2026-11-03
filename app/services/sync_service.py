@@ -1,3 +1,4 @@
+import asyncio
 import time
 import logging
 from datetime import datetime
@@ -15,6 +16,8 @@ from app.db.models import (
     ServerMetricHistory,
 )
 from app.services.dashboard_service import get_dashboard_service
+from app.services.log_retention import retain_status_history, retain_sync_logs
+from app.config import get_settings
 
 logger = logging.getLogger("ams.sync_service")
 
@@ -23,8 +26,17 @@ class SyncService:
     def __init__(self):
         self.ams_client = get_ams_client()
         self.dashboard_service = get_dashboard_service()
+        self.settings = get_settings()
+        self._sync_lock = asyncio.Lock()
 
     async def sync_all_applications_streams(self, session: AsyncSession) -> Dict[str, Any]:
+        """Serialize full snapshots so scheduled and manual syncs cannot race."""
+        async with self._sync_lock:
+            return await self._sync_all_applications_streams(session)
+
+    async def _sync_all_applications_streams(
+        self, session: AsyncSession
+    ) -> Dict[str, Any]:
         """
         Synchronize all streams from all applications using full pagination.
         Saves current state, detects status transitions, logs historical telemetry,
@@ -33,11 +45,16 @@ class SyncService:
         sync_start_t = time.monotonic()
         total_items_synced = 0
         apps_synced = []
+        status_groups: set[tuple[str, str]] = set()
         now_dt = datetime.utcnow()
         now_ms = int(time.time() * 1000)
 
         try:
-            apps = await self.ams_client.get_applications()
+            apps = await self.ams_client.get_applications(strict=True)
+            if not apps:
+                raise RuntimeError(
+                    "AMS returned an empty application list; preserving the last snapshot"
+                )
         except Exception as e:
             logger.error(f"[SyncService] Failed to retrieve applications from AMS: {e}")
             err_log = AmsSyncLog(
@@ -50,6 +67,12 @@ class SyncService:
                 created_at=now_dt,
             )
             session.add(err_log)
+            await session.flush()
+            await retain_sync_logs(
+                session,
+                self.settings.LOG_RETENTION_LIMIT,
+                app_names=["ALL"],
+            )
             await session.commit()
             return {"status": "FAILED", "error": str(e), "total_synced": 0}
 
@@ -57,7 +80,15 @@ class SyncService:
             app_start_t = time.monotonic()
             try:
                 # 1. Fetch all broadcasts using pagination loop
+                expected_count = await self.ams_client.get_broadcasts_count(
+                    app_name, strict=True
+                )
                 streams = await self.ams_client.get_all_broadcasts(app_name, batch_size=50)
+                if len(streams) != expected_count:
+                    raise RuntimeError(
+                        f"AMS returned {len(streams)} broadcasts for {app_name}, "
+                        f"but its count endpoint reports {expected_count}"
+                    )
 
                 # 2. Query existing streams for this app to detect status changes
                 stmt = select(AmsStreamCurrent).where(AmsStreamCurrent.app_name == app_name)
@@ -86,6 +117,7 @@ class SyncService:
                                 created_at=now_dt,
                             )
                             session.add(status_hist)
+                            status_groups.add((app_name, sid))
 
                         # Update existing entry fields
                         existing_entry.name = s.name or sid
@@ -136,6 +168,7 @@ class SyncService:
                             created_at=now_dt,
                         )
                         session.add(initial_status_hist)
+                        status_groups.add((app_name, sid))
 
                     # 4. Save telemetry point for time-series charts
                     metric = StreamMetricHistory(
@@ -182,16 +215,49 @@ class SyncService:
                 )
                 session.add(err_log)
 
+        await session.flush()
+        await retain_sync_logs(
+            session,
+            self.settings.LOG_RETENTION_LIMIT,
+            app_names=apps,
+        )
+        await retain_status_history(
+            session,
+            self.settings.LOG_RETENTION_LIMIT,
+            groups=sorted(status_groups),
+        )
+
         # Commit all updates and logs
         await session.commit()
 
         total_dur_ms = int((time.monotonic() - sync_start_t) * 1000)
+        failed_apps = [app_name for app_name in apps if app_name not in apps_synced]
         return {
-            "status": "SUCCESS",
+            "status": "SUCCESS" if not failed_apps else "WARNING",
             "total_synced": total_items_synced,
             "apps_synced": apps_synced,
+            "apps_failed": failed_apps,
             "duration_ms": total_dur_ms,
         }
+
+    async def cleanup_old_logs(self, session: AsyncSession) -> int:
+        """Enforce retention limits on synchronization and stream status audit logs."""
+        deleted_count = await retain_sync_logs(
+            session,
+            self.settings.LOG_RETENTION_LIMIT,
+            commit_batches=True,
+        )
+        deleted_count += await retain_status_history(
+            session,
+            self.settings.LOG_RETENTION_LIMIT,
+            commit_batches=True,
+        )
+        if deleted_count:
+            logger.info(
+                f"[SyncService] Deleted {deleted_count} excess synchronization "
+                "or stream status log rows."
+            )
+        return deleted_count
 
     async def get_sync_logs(
         self, session: AsyncSession, limit: int = 50, app_name: Optional[str] = None

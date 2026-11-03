@@ -26,6 +26,10 @@ from app.clients.models import (
 logger = logging.getLogger("ams.client")
 
 
+class AMSAPIError(RuntimeError):
+    """Raised when an AMS API response is unavailable or invalid."""
+
+
 class CircuitBreakerState(str, Enum):
     CLOSED = "CLOSED"        # Normal operations
     OPEN = "OPEN"            # Server broken / failing, fast fail
@@ -291,51 +295,105 @@ class AMSClient:
 
         return resources
 
-    async def get_applications(self) -> List[str]:
+    async def get_applications(self, *, strict: bool = False) -> List[str]:
         resp = await self.request("GET", "/rest/v2/applications")
-        if resp:
+        if resp is None:
+            raise AMSAPIError("AMS application list request failed")
+        try:
             data = resp.json()
-            return data.get("applications", [])
-        return []
+        except ValueError as err:
+            raise AMSAPIError("AMS application list response is not valid JSON") from err
+        applications = data.get("applications") if isinstance(data, dict) else None
+        if not isinstance(applications, list) or not all(
+            isinstance(app_name, str) and app_name for app_name in applications
+        ):
+            raise AMSAPIError("AMS returned an invalid application list")
+        return applications
 
-    async def get_applications_info(self) -> List[ApplicationItem]:
+    async def get_applications_info(self, *, strict: bool = False) -> List[ApplicationItem]:
         resp = await self.request("GET", "/rest/v2/applications-info")
-        if resp:
-            data = resp.json()
-            if isinstance(data, list):
-                return [ApplicationItem(**item) for item in data]
-        return []
+        if resp is None:
+            raise AMSAPIError("AMS applications-info request failed")
 
-    async def get_broadcasts_count(self, app_name: str) -> int:
-        resp = await self.proxy_request(f"{app_name}/rest/v2/broadcasts/count")
-        if resp:
+        try:
             data = resp.json()
-            return data.get("number", 0)
-        return 0
+        except ValueError as err:
+            raise AMSAPIError("AMS applications-info response is not valid JSON") from err
+        if not isinstance(data, list):
+            raise AMSAPIError("AMS applications-info response is not a list")
+        try:
+            return [ApplicationItem(**item) for item in data]
+        except (TypeError, ValueError) as err:
+            raise AMSAPIError("AMS applications-info response contains invalid data") from err
+
+    async def get_broadcasts_count(self, app_name: str, *, strict: bool = False) -> int:
+        resp = await self.proxy_request(f"{app_name}/rest/v2/broadcasts/count")
+        if resp is None:
+            raise AMSAPIError(f"AMS stream count request failed for {app_name}")
+
+        try:
+            data = resp.json()
+        except ValueError as err:
+            raise AMSAPIError(f"AMS stream count response is not valid JSON for {app_name}") from err
+        if (
+            not isinstance(data, dict)
+            or not isinstance(data.get("number"), int)
+            or isinstance(data.get("number"), bool)
+            or data["number"] < 0
+        ):
+            raise AMSAPIError(f"AMS returned an invalid stream count for {app_name}")
+        return data["number"]
 
     async def get_broadcasts_list(
-        self, app_name: str, offset: int = 0, size: int = 50
+        self,
+        app_name: str,
+        offset: int = 0,
+        size: int = 50,
+        *,
+        strict: bool = False,
     ) -> List[BroadcastStream]:
+        if offset < 0 or size < 1:
+            raise ValueError("Broadcast pagination requires offset >= 0 and size >= 1")
+
         resp = await self.proxy_request(f"{app_name}/rest/v2/broadcasts/list/{offset}/{size}")
-        if resp:
+        if resp is None:
+            raise AMSAPIError(f"AMS stream list request failed for {app_name} at offset {offset}")
+
+        try:
             data = resp.json()
-            if isinstance(data, list):
-                return [BroadcastStream(**item) for item in data]
-        return []
+        except ValueError as err:
+            raise AMSAPIError(
+                f"AMS stream list response is not valid JSON for {app_name} at offset {offset}"
+            ) from err
+        if not isinstance(data, list):
+            raise AMSAPIError(f"AMS returned an invalid stream list for {app_name} at offset {offset}")
+        try:
+            return [BroadcastStream(**item) for item in data]
+        except (TypeError, ValueError) as err:
+            raise AMSAPIError(
+                f"AMS stream list contains invalid data for {app_name} at offset {offset}"
+            ) from err
 
     async def get_all_broadcasts(
         self, app_name: str, batch_size: int = 50, max_pages: int = 100
     ) -> List[BroadcastStream]:
-        """Fetch ALL broadcasts for an application using pagination loop until exhausted."""
-        total_count = await self.get_broadcasts_count(app_name)
+        """Fetch all broadcasts until AMS returns an empty or partial page."""
+        if batch_size < 1 or max_pages < 1:
+            raise ValueError("batch_size and max_pages must be at least 1")
+
         all_streams: List[BroadcastStream] = []
         offset = 0
         seen_ids = set()
 
         for _ in range(max_pages):
-            batch = await self.get_broadcasts_list(app_name, offset=offset, size=batch_size)
+            batch = await self.get_broadcasts_list(
+                app_name,
+                offset=offset,
+                size=batch_size,
+                strict=True,
+            )
             if not batch:
-                break
+                return all_streams
 
             new_items_found = False
             for s in batch:
@@ -344,15 +402,19 @@ class AMSClient:
                     all_streams.append(s)
                     new_items_found = True
 
-            # If no new items found or returned less than batch_size, stop
-            if not new_items_found or len(batch) < batch_size:
-                break
+            if len(batch) < batch_size:
+                return all_streams
 
             offset += len(batch)
-            if total_count > 0 and offset >= total_count:
-                break
+            if not new_items_found:
+                raise AMSAPIError(
+                    f"AMS stream pagination repeated data for {app_name} at offset {offset}"
+                )
 
-        return all_streams
+        raise AMSAPIError(
+            f"AMS broadcast pagination for {app_name} reached max_pages={max_pages} "
+            f"without an empty or partial page (next offset={offset})"
+        )
 
     async def get_all_vods(
         self, app_name: str, batch_size: int = 50, max_pages: int = 100

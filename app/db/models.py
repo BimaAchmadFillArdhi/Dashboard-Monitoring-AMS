@@ -37,6 +37,7 @@ class LogEntry(Base):
     __table_args__ = (
         Index("ix_log_entries_ts", "ts"),
         Index("ix_log_entries_stream_ts", "stream_id", "ts"),
+        Index("ix_log_entries_app_stream_ts", "app_name", "stream_id", "ts"),
         Index("ix_log_entries_ts_level", "ts", "level"),
         Index("ix_log_entries_level_ts", "level", "ts"),
         Index("ix_log_entries_stream_fp_ts", "stream_id", "fingerprint", "ts"),
@@ -142,6 +143,7 @@ class AmsSyncLog(Base):
     __table_args__ = (
         Index("ix_ams_sync_logs_created_at", "created_at"),
         Index("ix_ams_sync_logs_app_type", "app_name", "sync_type"),
+        Index("ix_ams_sync_logs_app_created_at", "app_name", "created_at"),
     )
 
 
