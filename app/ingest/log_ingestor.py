@@ -176,7 +176,8 @@ class LogIngestor:
         from app.db.models import AmsStreamCurrent
         stmt_map = select(AmsStreamCurrent.stream_id, AmsStreamCurrent.app_name)
         res_map = await session.execute(stmt_map)
-        stream_map = dict(res_map.all())
+        stream_records = res_map.all()
+        stream_map = dict(stream_records)
 
         for e in entries:
             stream_id = extract_stream_id(e.raw_message)

@@ -1,4 +1,3 @@
-import time
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -112,3 +111,19 @@ async def test_ingest_chunk_data(test_session):
     unmatched = up_res.scalars().all()
     assert len(unmatched) == 1
     assert "Unrecognized custom event" in unmatched[0].pattern_sample
+
+
+@pytest.mark.asyncio
+async def test_ingest_error_is_saved_without_immediate_whatsapp_send(test_session):
+    ingestor = LogIngestor()
+    entries = parse_raw_log_content(
+        "2026-10-26 12:54:09,765 [Thread-1] ERROR io.antmedia.Stream - "
+        "Failed to open stream (cam1.m3u8): connection refused"
+    )
+
+    count = await ingestor.ingest_chunk_data(entries, test_session)
+
+    assert count == 1
+    result = await test_session.execute(select(LogEntry))
+    assert result.scalars().one().level == "ERROR"
+    assert not hasattr(ingestor, "whatsapp_notifier")

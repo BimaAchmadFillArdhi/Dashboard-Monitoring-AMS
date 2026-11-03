@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     STREAM_METRICS_INTERVAL_SECONDS: int = 5
     METRIC_RETENTION_DAYS: int = 30
 
+    # Green API WhatsApp notifications
+    GREEN_API_ENABLED: bool = False
+    GREEN_API_URL: str = "https://api.green-api.com"
+    GREEN_API_INSTANCE_ID: str = ""
+    GREEN_API_TOKEN: str = ""
+    GREEN_API_CHAT_IDS: str = ""
+
     # Database (MySQL Laragon by default)
     DATABASE_URL: str = "mysql+aiomysql://root:@localhost:3306/ams_monitoring"
     SYNC_DATABASE_URL: str = "mysql+pymysql://root:@localhost:3306/ams_monitoring"
