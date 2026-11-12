@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     GREEN_API_INSTANCE_ID: str = ""
     GREEN_API_TOKEN: str = ""
     GREEN_API_CHAT_IDS: str = ""
+    APP_PUBLIC_URL: str = "http://localhost:8060"
+    CCTV_INCIDENT_CHECK_INTERVAL_SECONDS: int = Field(default=60, ge=10)
+    CCTV_INCIDENT_REPEAT_INTERVAL_SECONDS: int = Field(default=21600, ge=3600)
+    CCTV_INCIDENT_RECENT_ERROR_SECONDS: int = Field(default=300, ge=60)
+    CCTV_INCIDENT_MANUAL_COOLDOWN_SECONDS: int = Field(default=300, ge=0)
 
     # Database (MySQL Laragon by default)
     DATABASE_URL: str = "mysql+aiomysql://root:@localhost:3306/ams_monitoring"

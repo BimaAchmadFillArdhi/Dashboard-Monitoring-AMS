@@ -2,24 +2,22 @@ import json
 import asyncio
 import logging
 import time
-from datetime import datetime
 from uuid import uuid4
 from typing import Optional, Set
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
-from sqlalchemy import or_, select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_db_session
-from app.db.models import LogEntry, AmsStreamCurrent
+from app.db.session import AsyncSessionLocal, async_engine, get_db_session
+from app.db.models import AmsStreamCurrent
 from app.services.log_service import get_log_service
 from app.services.health_service import HealthService
 from app.clients.models import BroadcastStream
 from app.services.whatsapp_notifier import WhatsAppNotifier
-from app.services.whatsapp_report_service import (
-    JAKARTA_TIMEZONE,
-    format_cctv_report,
-    prepare_report_errors,
+from app.services.cctv_incident_service import (
+    CCTV_INCIDENT_LOCK_NAME,
+    get_cctv_incident_service,
 )
 
 router = APIRouter(prefix="/api/logs", tags=["Logs API"])
@@ -33,6 +31,7 @@ whatsapp_notifier = WhatsAppNotifier()
 logger = logging.getLogger("ams.logs_api")
 whatsapp_bulk_jobs: dict[str, dict] = {}
 active_whatsapp_bulk_jobs: Set[str] = set()
+whatsapp_bulk_tasks: Set[asyncio.Task] = set()
 
 
 # SSE Broadcaster for real-time live log tailing
@@ -64,72 +63,86 @@ class LogBroadcaster:
 log_broadcaster = LogBroadcaster()
 
 
-def _whatsapp_bulk_filters(
-    date: Optional[str],
-    stream_id: Optional[str],
-    app_name: Optional[str],
-    search_q: Optional[str],
-    fingerprint: Optional[str],
-):
-    start_ms, end_ms = log_service._parse_date_range_ms(date)
-    conditions = [LogEntry.level == "ERROR"]
-    if start_ms is not None and end_ms is not None:
-        conditions.append(LogEntry.ts.between(start_ms, end_ms))
-    if stream_id and stream_id != "ALL":
-        conditions.append(LogEntry.stream_id == stream_id)
-    if app_name and app_name != "ALL":
-        if app_name.upper() in ("SYSTEM", "SISTEM", "NONE"):
-            conditions.append(LogEntry.app_name.is_(None))
-        else:
-            conditions.append(LogEntry.app_name == app_name)
-    if fingerprint:
-        conditions.append(LogEntry.fingerprint == fingerprint)
-    if search_q:
-        q_like = f"%{search_q}%"
-        conditions.append(
-            or_(
-                LogEntry.friendly_message.ilike(q_like),
-                LogEntry.raw_message.ilike(q_like),
-                LogEntry.stream_id.ilike(q_like),
-                LogEntry.friendly_title.ilike(q_like),
-            )
-        )
-    return conditions
-
-
-async def _run_whatsapp_bulk_job(job_id: str, report: str):
-    job = whatsapp_bulk_jobs[job_id]
-    job["status"] = "sending"
-    try:
-        result = await whatsapp_notifier.send_report(report)
-        job["sent"] = result["sent"]
-        job["failed"] = result["failed"]
-        job["errors"] = result.get("errors", [])
-        job["status"] = "completed"
-    except Exception:
-        logger.exception("WhatsApp bulk send job %s failed", job_id)
-        job["status"] = "failed"
-        job["message"] = "Terjadi kesalahan saat mengirim notifikasi WhatsApp."
-    finally:
-        active_whatsapp_bulk_jobs.discard(job_id)
-
-
 @router.get("/whatsapp/status")
 async def get_whatsapp_status():
     """Expose whether manual WhatsApp sending is configured, without credentials."""
     return {"configured": whatsapp_notifier.is_configured}
 
 
+async def _run_cctv_incident_report_job(job_id: str):
+    job = whatsapp_bulk_jobs[job_id]
+    job["status"] = "sending"
+    try:
+        async with async_engine.connect() as lock_connection:
+            acquired = await lock_connection.scalar(
+                text("SELECT GET_LOCK(:lock_name, 0)"),
+                {"lock_name": CCTV_INCIDENT_LOCK_NAME},
+            )
+            if acquired != 1:
+                job["status"] = "failed"
+                job["message"] = (
+                    "Laporan incident CCTV sedang diproses. Coba lagi sebentar."
+                )
+                return
+
+            try:
+                async with AsyncSessionLocal() as session:
+                    result = await get_cctv_incident_service().evaluate_and_notify(
+                        session, whatsapp_notifier, manual=True
+                    )
+            finally:
+                released = await lock_connection.scalar(
+                    text("SELECT RELEASE_LOCK(:lock_name)"),
+                    {"lock_name": CCTV_INCIDENT_LOCK_NAME},
+                )
+                if released != 1:
+                    logger.error(
+                        "Manual WhatsApp incident report %s did not release "
+                        "the MySQL advisory lock",
+                        job_id,
+                    )
+
+        job.update(
+            status="completed",
+            sent=result.get("sent", 0),
+            failed=result.get("failed", 0),
+            notified=result.get("notified", False),
+            suppressed=result.get("suppressed", False),
+            active=result.get("active", 0),
+            qualified=result.get("qualified", 0),
+            applications=result.get("applications", 0),
+            problematic_applications=result.get("problematic_applications", 0),
+            normal_applications=result.get("normal_applications", 0),
+            unique_problem_cctv=result.get("unique_problem_cctv", 0),
+            unidentified_logs=result.get("unidentified_logs", 0),
+        )
+        if result.get("suppressed"):
+            job["message"] = (
+                "Laporan incident baru saja dikirim; pengiriman manual ditahan "
+                "untuk mencegah spam."
+            )
+        elif not result.get("notified"):
+            job["message"] = "Tidak ada laporan baru untuk dikirim."
+        elif result.get("status") == "FAILED":
+            job["status"] = "failed"
+            job["message"] = "Pengiriman laporan incident WhatsApp gagal."
+    except asyncio.CancelledError:
+        job["status"] = "failed"
+        job["message"] = "Pengiriman laporan dihentikan saat aplikasi shutdown."
+        raise
+    except Exception:
+        logger.exception("Manual WhatsApp incident report %s failed", job_id)
+        job["status"] = "failed"
+        job["message"] = (
+            "Terjadi kesalahan saat menyiapkan laporan incident CCTV."
+        )
+    finally:
+        active_whatsapp_bulk_jobs.discard(job_id)
+
+
 @router.post("/whatsapp/bulk")
-async def send_filtered_errors_to_whatsapp(
-    date: Optional[str] = Query(None),
-    stream_id: Optional[str] = Query(None),
-    app_name: Optional[str] = Query(None),
-    q: Optional[str] = Query(None),
-    fingerprint: Optional[str] = Query(None),
-    session: AsyncSession = Depends(get_db_session),
-):
-    """Send a WhatsApp report immediately using errors matching current filters."""
+async def send_cctv_incident_report_to_whatsapp():
+    """Send the current MySQL CCTV incident report immediately."""
     if not whatsapp_notifier.is_configured:
         raise HTTPException(
             status_code=503,
@@ -141,21 +154,8 @@ async def send_filtered_errors_to_whatsapp(
             detail="Pengiriman WhatsApp massal sedang berjalan. Tunggu hingga selesai.",
         )
 
-    stmt = (
-        select(LogEntry)
-        .where(*_whatsapp_bulk_filters(date, stream_id, app_name, q, fingerprint))
-        .order_by(LogEntry.id.desc())
-    )
-    result = await session.execute(stmt)
-    errors = await prepare_report_errors(session, result.scalars().all())
-    report = format_cctv_report(
-        errors,
-        datetime.now(JAKARTA_TIMEZONE),
-        error_period="Sesuai Filter",
-    )
-
     job_id = uuid4().hex
-    whatsapp_bulk_jobs[job_id] = {
+    job = {
         "job_id": job_id,
         "status": "queued",
         "total": len(whatsapp_notifier.chat_ids),
@@ -163,9 +163,15 @@ async def send_filtered_errors_to_whatsapp(
         "failed": 0,
         "errors": [],
     }
+    whatsapp_bulk_jobs[job_id] = job
     active_whatsapp_bulk_jobs.add(job_id)
-    asyncio.create_task(_run_whatsapp_bulk_job(job_id, report))
-    return whatsapp_bulk_jobs[job_id]
+    task = asyncio.create_task(
+        _run_cctv_incident_report_job(job_id),
+        name=f"ams-whatsapp-incident-{job_id}",
+    )
+    whatsapp_bulk_tasks.add(task)
+    task.add_done_callback(whatsapp_bulk_tasks.discard)
+    return job
 
 
 @router.get("/whatsapp/bulk/{job_id}")

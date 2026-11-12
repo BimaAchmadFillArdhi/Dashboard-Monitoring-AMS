@@ -13,7 +13,11 @@ from app.config import get_settings
 from app.db.session import init_db, AsyncSessionLocal, async_engine
 from app.db.models import LogEntry
 from app.web.routes import router as web_router
-from app.api.logs_api import router as logs_api_router, log_broadcaster
+from app.api.logs_api import (
+    router as logs_api_router,
+    log_broadcaster,
+    whatsapp_bulk_tasks,
+)
 from app.api.dashboard_api import router as dashboard_api_router, dashboard_broadcaster
 from app.api.applications_api import router as applications_api_router
 from app.services.dashboard_service import get_dashboard_service
@@ -23,10 +27,9 @@ from app.services.sync_service import get_sync_service
 from app.clients.ams_client import get_ams_client
 from app.ingest.log_ingestor import LogIngestor
 from app.services.whatsapp_notifier import WhatsAppNotifier
-from app.services.whatsapp_report_service import (
-    JAKARTA_TIMEZONE,
-    build_cctv_report,
-    next_report_time,
+from app.services.cctv_incident_service import (
+    CCTV_INCIDENT_LOCK_NAME,
+    get_cctv_incident_service,
 )
 
 logger = logging.getLogger("ams.main")
@@ -36,11 +39,10 @@ log_ingest_lock_name = (
     "ams_log_ingest_"
     + re.sub(r"[^A-Za-z0-9_]", "_", database_name)[:48]
 )
-
 bg_log_task: asyncio.Task | None = None
 bg_dashboard_task: asyncio.Task | None = None
 bg_stream_metrics_task: asyncio.Task | None = None
-bg_whatsapp_report_task: asyncio.Task | None = None
+bg_cctv_incident_task: asyncio.Task | None = None
 dashboard_svc = get_dashboard_service()
 app_svc = get_application_service()
 sync_svc = get_sync_service()
@@ -192,37 +194,55 @@ async def background_stream_metrics_collector():
         await asyncio.sleep(interval)
 
 
-async def background_whatsapp_report_scheduler():
-    """Send grouped CCTV error reports every day at 06:00 and 20:00 WIB."""
-    if not whatsapp_notifier.is_configured:
-        logger.info("[WhatsAppReport] Green API is not configured; scheduled reports are disabled.")
-        return
-
-    logger.info("[WhatsAppReport] Scheduler started for 06:00 and 20:00 WIB.")
+async def background_cctv_incident_monitor():
+    """Track persistent CCTV incidents from MySQL snapshots and send due reports."""
+    interval = settings.CCTV_INCIDENT_CHECK_INTERVAL_SECONDS
+    await asyncio.sleep(min(5, interval))
+    logger.info(
+        "[CCTVIncidents] Monitor started (interval=%ss, reminder=%ss)",
+        interval,
+        settings.CCTV_INCIDENT_REPEAT_INTERVAL_SECONDS,
+    )
+    incident_service = get_cctv_incident_service()
     while True:
         try:
-            now = datetime.now(JAKARTA_TIMEZONE)
-            scheduled_at = next_report_time(now)
-            delay_seconds = max(1, (scheduled_at - now).total_seconds())
-            logger.info(
-                "[WhatsAppReport] Next report scheduled at %s WIB.",
-                scheduled_at.strftime("%Y-%m-%d %H:%M:%S"),
-            )
-            await asyncio.sleep(delay_seconds)
-
-            async with AsyncSessionLocal() as session:
-                report = await build_cctv_report(session)
-            result = await whatsapp_notifier.send_report(report)
-            logger.info(
-                "[WhatsAppReport] Report sent: %s success, %s failed.",
-                result["sent"],
-                result["failed"],
-            )
+            async with async_engine.connect() as lock_connection:
+                acquired = await lock_connection.scalar(
+                    text("SELECT GET_LOCK(:lock_name, 0)"),
+                    {"lock_name": CCTV_INCIDENT_LOCK_NAME},
+                )
+                if acquired == 1:
+                    try:
+                        async with AsyncSessionLocal() as session:
+                            result = await incident_service.evaluate_and_notify(
+                                session,
+                                whatsapp_notifier,
+                            )
+                        if result.get("notified"):
+                            logger.info(
+                                "[CCTVIncidents] Batch %s completed: "
+                                "status=%s sent=%s failed=%s",
+                                result.get("batch_id"),
+                                result.get("status"),
+                                result.get("sent"),
+                                result.get("failed"),
+                            )
+                    finally:
+                        released = await lock_connection.scalar(
+                            text("SELECT RELEASE_LOCK(:lock_name)"),
+                            {"lock_name": CCTV_INCIDENT_LOCK_NAME},
+                        )
+                        if released != 1:
+                            logger.error(
+                                "[CCTVIncidents] MySQL notification lock "
+                                "was not released"
+                            )
         except asyncio.CancelledError:
             break
         except Exception:
-            logger.exception("[WhatsAppReport] Scheduled report failed.")
-            await asyncio.sleep(30)
+            logger.exception("[CCTVIncidents] Incident monitor cycle failed")
+
+        await asyncio.sleep(interval)
 
 
 def _ensure_background_task(
@@ -266,7 +286,8 @@ async def lifespan(app: FastAPI):
                 )
 
         # Reuse active tasks if lifespan startup is invoked more than once.
-        global bg_log_task, bg_dashboard_task, bg_stream_metrics_task, bg_whatsapp_report_task
+        global bg_log_task, bg_dashboard_task, bg_stream_metrics_task
+        global bg_cctv_incident_task
         bg_log_task = _ensure_background_task(
             bg_log_task, background_log_poller, "ams-log-poller"
         )
@@ -278,10 +299,10 @@ async def lifespan(app: FastAPI):
             background_stream_metrics_collector,
             "ams-stream-metrics-collector",
         )
-        bg_whatsapp_report_task = _ensure_background_task(
-            bg_whatsapp_report_task,
-            background_whatsapp_report_scheduler,
-            "ams-whatsapp-report-scheduler",
+        bg_cctv_incident_task = _ensure_background_task(
+            bg_cctv_incident_task,
+            background_cctv_incident_monitor,
+            "ams-cctv-incident-monitor",
         )
 
         yield
@@ -290,7 +311,7 @@ async def lifespan(app: FastAPI):
             bg_log_task,
             bg_dashboard_task,
             bg_stream_metrics_task,
-            bg_whatsapp_report_task,
+            bg_cctv_incident_task,
         )
         for task in tasks:
             if task is not None and not task.done():
@@ -302,10 +323,13 @@ async def lifespan(app: FastAPI):
                 return_exceptions=True,
             )
 
+        if whatsapp_bulk_tasks:
+            await asyncio.gather(*tuple(whatsapp_bulk_tasks), return_exceptions=True)
+
         bg_log_task = None
         bg_dashboard_task = None
         bg_stream_metrics_task = None
-        bg_whatsapp_report_task = None
+        bg_cctv_incident_task = None
         try:
             await get_ams_client().close()
         finally:

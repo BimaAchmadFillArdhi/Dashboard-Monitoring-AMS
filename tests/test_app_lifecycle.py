@@ -66,18 +66,18 @@ async def test_lifespan_stops_workers_and_disposes_resources_in_order(monkeypatc
     )
     monkeypatch.setattr(
         main,
-        "background_whatsapp_report_scheduler",
-        lambda: worker("whatsapp-scheduler"),
+        "background_cctv_incident_monitor",
+        lambda: worker("cctv-incident-monitor"),
     )
 
     async with main.lifespan(main.app):
         await asyncio.sleep(0)
-        assert sorted(started_workers) == [
+        assert set(started_workers) == {
             "dashboard-ticker",
             "log-poller",
             "stream-metrics",
-            "whatsapp-scheduler",
-        ]
+            "cctv-incident-monitor",
+        }
         existing_task = main.bg_log_task
         duplicate_worker = AsyncMock()
         assert (
@@ -96,7 +96,7 @@ async def test_lifespan_stops_workers_and_disposes_resources_in_order(monkeypatc
     assert main.bg_log_task is None
     assert main.bg_dashboard_task is None
     assert main.bg_stream_metrics_task is None
-    assert main.bg_whatsapp_report_task is None
+    assert main.bg_cctv_incident_task is None
 
 
 @pytest.mark.asyncio
@@ -125,3 +125,46 @@ async def test_lifespan_disposes_engine_when_startup_fails(monkeypatch):
 
     close_ams.assert_awaited_once()
     dispose_engine.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cctv_incident_monitor_uses_shared_notification_service(monkeypatch):
+    class LockConnection(_SessionContext):
+        def __init__(self):
+            self.lock_results = iter((1, 1))
+
+        async def scalar(self, _statement, _parameters=None):
+            return next(self.lock_results)
+
+    class Engine:
+        def connect(self):
+            return LockConnection()
+
+    service = SimpleNamespace(
+        evaluate_and_notify=AsyncMock(return_value={"notified": False})
+    )
+    monkeypatch.setattr(main, "async_engine", Engine())
+    monkeypatch.setattr(main, "AsyncSessionLocal", _SessionContext)
+    monkeypatch.setattr(main, "get_cctv_incident_service", lambda: service)
+    monkeypatch.setattr(
+        main.settings,
+        "CCTV_INCIDENT_CHECK_INTERVAL_SECONDS",
+        0,
+    )
+
+    sleep_calls = 0
+
+    async def stop_after_one_cycle(_delay):
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(main.asyncio, "sleep", stop_after_one_cycle)
+
+    with pytest.raises(asyncio.CancelledError):
+        await main.background_cctv_incident_monitor()
+
+    service.evaluate_and_notify.assert_awaited_once()
+    _, notifier = service.evaluate_and_notify.await_args.args
+    assert notifier is main.whatsapp_notifier

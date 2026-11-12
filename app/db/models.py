@@ -8,6 +8,7 @@ from sqlalchemy import (
     Text,
     DateTime,
     Index,
+    ForeignKey,
 )
 from app.db.session import Base
 
@@ -191,4 +192,52 @@ class AmsStreamStatusHistory(Base):
     __table_args__ = (
         Index("ix_status_history_ts", "ts"),
         Index("ix_status_history_stream", "app_name", "stream_id", "ts"),
+    )
+
+
+class CctvIncident(Base):
+    """Persistent timeline for one continuous CCTV outage or active error."""
+    __tablename__ = "cctv_incidents"
+
+    id = Column(AutoId, primary_key=True, autoincrement=True)
+    app_name = Column(String(64), nullable=False)
+    stream_id = Column(String(128), nullable=False)
+    stream_name = Column(String(255), nullable=False)
+    problem_type = Column(String(255), nullable=False)
+    problem_detail = Column(Text, nullable=True)
+    first_error_at = Column(DateTime, nullable=False)
+    last_detected_at = Column(DateTime, nullable=False)
+    closed_at = Column(DateTime, nullable=True)
+    last_notified_at = Column(DateTime, nullable=True)
+    last_notified_category = Column(String(32), nullable=True)
+
+    __table_args__ = (
+        Index("ix_cctv_incidents_open_stream", "closed_at", "app_name", "stream_id"),
+        Index("ix_cctv_incidents_first_error_at", "first_error_at"),
+    )
+
+
+class CctvIncidentNotification(Base):
+    """Durable per-incident record of each grouped WhatsApp notification attempt."""
+    __tablename__ = "cctv_incident_notifications"
+
+    id = Column(AutoId, primary_key=True, autoincrement=True)
+    incident_id = Column(
+        BigInteger,
+        ForeignKey("cctv_incidents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    batch_id = Column(String(36), nullable=False)
+    notification_type = Column(String(32), nullable=False)
+    duration_category = Column(String(32), nullable=False)
+    status = Column(String(16), nullable=False, default="PENDING")
+    attempted_at = Column(DateTime, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    sent_count = Column(Integer, nullable=False, default=0)
+    failed_count = Column(Integer, nullable=False, default=0)
+    result_detail = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_cctv_incident_notifications_batch", "batch_id"),
+        Index("ix_cctv_incident_notifications_incident_at", "incident_id", "attempted_at"),
     )

@@ -1,4 +1,7 @@
-import time
+from datetime import datetime
+from types import SimpleNamespace
+
+import asyncio
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
@@ -272,56 +275,73 @@ def test_api_logs_filter_by_app_and_system(override_db):
     assert len(resp_sys.json()["entries"]) == 0
 
 
-def test_api_bulk_whatsapp_sends_one_grouped_report(override_db, monkeypatch):
+@pytest.mark.asyncio
+async def test_api_bulk_whatsapp_uses_application_summary_report(
+    monkeypatch,
+):
     from app.api import logs_api
+    from app.services.cctv_incident_service import CctvIncidentService
+    from app.services.whatsapp_report_service import ERROR_CATEGORIES
 
     sent_reports = []
+    now = datetime(2026, 11, 4, 5, 0)
 
     async def capture_report(report):
         sent_reports.append(report)
         return {"sent": 1, "failed": 0}
 
-    monkeypatch.setattr(logs_api.whatsapp_notifier, "enabled", True)
+    configure_test_notifier(monkeypatch, logs_api, capture_report)
+
+    async def evaluate(session, notifier, *, manual=False):
+        assert manual is True
+        report = CctvIncidentService().format_application_report(
+            ["app-error", "app-normal"],
+            {"app-error": {"cam-1": "finished"}},
+            {"app-error": {"cam-1": {ERROR_CATEGORIES[0], ERROR_CATEGORIES[4]}}},
+            {},
+            now,
+        )
+        result = await notifier.send_report(report)
+        return {
+            "notified": True,
+            "total_applications": 2,
+            "total_cctv": 1,
+            "cctv_on": 0,
+            "cctv_off": 1,
+            "problematic_applications": 1,
+            "normal_applications": 1,
+            **result,
+        }
+
     monkeypatch.setattr(
-        logs_api.whatsapp_notifier, "api_url", "https://api.green-api.com"
-    )
-    monkeypatch.setattr(logs_api.whatsapp_notifier, "instance_id", "7103123456")
-    monkeypatch.setattr(logs_api.whatsapp_notifier, "api_token", "test-token")
-    monkeypatch.setattr(logs_api.whatsapp_notifier, "chat_ids", ["628123456789@c.us"])
-    monkeypatch.setattr(
-        logs_api.whatsapp_notifier,
-        "send_report",
-        capture_report,
+        logs_api, "get_cctv_incident_service", lambda: SimpleNamespace(
+            evaluate_and_notify=evaluate
+        )
     )
 
-    with TestClient(app) as client:
-        response = client.post("/api/logs/whatsapp/bulk?app_name=atcs")
-        assert response.status_code == 200
-        job_id = response.json()["job_id"]
-
-        for _ in range(50):
-            job_response = client.get(f"/api/logs/whatsapp/bulk/{job_id}")
-            assert job_response.status_code == 200
-            job = job_response.json()
-            if job["status"] in ("completed", "failed"):
-                break
-            time.sleep(0.02)
+    job = await logs_api.send_cctv_incident_report_to_whatsapp()
+    await asyncio.gather(*tuple(logs_api.whatsapp_bulk_tasks))
+    job = await logs_api.get_whatsapp_bulk_job(job["job_id"])
 
     assert job["status"] == "completed"
     assert job["total"] == 1
     assert job["sent"] == 1
     assert job["failed"] == 0
     assert len(sent_reports) == 1
-    assert "*6. Lainnya*" in sent_reports[0]
-    assert "cam1" in sent_reports[0]
-    assert "cam2" not in sent_reports[0]
-    assert "Daftar CCTV Aktif" not in sent_reports[0]
-    assert "Daftar CCTV Mati/Down" not in sent_reports[0]
-    assert "Daftar Error Sesuai Filter" in sent_reports[0]
+    assert "⚠️ LAPORAN MONITORING CCTV AMS" in sent_reports[0]
+    assert "*Aplikasi: app-error*" in sent_reports[0]
+    assert "- CCTV OFF: 1" in sent_reports[0]
+    assert "- Koneksi timeout: 1 CCTV" in sent_reports[0]
+    assert "- Autentikasi ditolak: 1 CCTV" in sent_reports[0]
+    assert "*Aplikasi: app-normal*" in sent_reports[0]
+    assert "- Total aplikasi: 2" in sent_reports[0]
+    assert "Jumlah aplikasi bermasalah: 1" in sent_reports[0]
+    assert "Total seluruh CCTV unik: 1" in sent_reports[0]
 
 
-def test_api_bulk_whatsapp_sends_error_report_when_filter_has_no_errors(
-    override_db, monkeypatch
+@pytest.mark.asyncio
+async def test_api_bulk_whatsapp_still_sends_report_when_all_apps_are_normal(
+    monkeypatch,
 ):
     from app.api import logs_api
 
@@ -331,6 +351,68 @@ def test_api_bulk_whatsapp_sends_error_report_when_filter_has_no_errors(
         sent_reports.append(report)
         return {"sent": 1, "failed": 0}
 
+    configure_test_notifier(monkeypatch, logs_api, capture_report)
+
+    from app.services.cctv_incident_service import CctvIncidentService
+
+    async def evaluate(session, notifier, *, manual=False):
+        assert manual is True
+        report = CctvIncidentService().format_application_report(
+            ["normal-app"], {}, {}, {}, datetime(2026, 11, 4, 5, 0)
+        )
+        result = await notifier.send_report(report)
+        return {
+            "notified": True,
+            "total_applications": 1,
+            "total_cctv": 0,
+            "cctv_on": 0,
+            "cctv_off": 0,
+            "problematic_applications": 0,
+            "normal_applications": 1,
+            **result,
+        }
+
+    monkeypatch.setattr(
+        logs_api, "get_cctv_incident_service", lambda: SimpleNamespace(
+            evaluate_and_notify=evaluate
+        )
+    )
+
+    job = await logs_api.send_cctv_incident_report_to_whatsapp()
+    await asyncio.gather(*tuple(logs_api.whatsapp_bulk_tasks))
+    job = await logs_api.get_whatsapp_bulk_job(job["job_id"])
+
+    assert job["status"] == "completed"
+    assert job["sent"] == 1
+    assert len(sent_reports) == 1
+    assert "*Aplikasi: normal-app*" in sent_reports[0]
+    assert "Jumlah aplikasi normal: 1" in sent_reports[0]
+
+
+def configure_test_notifier(monkeypatch, logs_api, send_report):
+    class LockConnection:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            return False
+
+        async def scalar(self, statement, params=None):
+            return 1
+
+    class LockEngine:
+        def connect(self):
+            return LockConnection()
+
+    class SessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            return False
+
+    monkeypatch.setattr(logs_api, "async_engine", LockEngine())
+    monkeypatch.setattr(logs_api, "AsyncSessionLocal", SessionContext)
     monkeypatch.setattr(logs_api.whatsapp_notifier, "enabled", True)
     monkeypatch.setattr(
         logs_api.whatsapp_notifier, "api_url", "https://api.green-api.com"
@@ -338,25 +420,4 @@ def test_api_bulk_whatsapp_sends_error_report_when_filter_has_no_errors(
     monkeypatch.setattr(logs_api.whatsapp_notifier, "instance_id", "7103123456")
     monkeypatch.setattr(logs_api.whatsapp_notifier, "api_token", "test-token")
     monkeypatch.setattr(logs_api.whatsapp_notifier, "chat_ids", ["628123456789@c.us"])
-    monkeypatch.setattr(logs_api.whatsapp_notifier, "send_report", capture_report)
-
-    with TestClient(app) as client:
-        response = client.post("/api/logs/whatsapp/bulk?stream_id=cam2")
-        assert response.status_code == 200
-        job_id = response.json()["job_id"]
-
-        for _ in range(50):
-            job_response = client.get(f"/api/logs/whatsapp/bulk/{job_id}")
-            assert job_response.status_code == 200
-            job = job_response.json()
-            if job["status"] in ("completed", "failed"):
-                break
-            time.sleep(0.02)
-
-    assert job["status"] == "completed"
-    assert job["sent"] == 1
-    assert len(sent_reports) == 1
-    assert "Daftar CCTV Aktif" not in sent_reports[0]
-    assert "Daftar CCTV Mati/Down" not in sent_reports[0]
-    assert "Daftar Error Sesuai Filter" in sent_reports[0]
-    assert "- Tidak ada" in sent_reports[0]
+    monkeypatch.setattr(logs_api.whatsapp_notifier, "send_report", send_report)

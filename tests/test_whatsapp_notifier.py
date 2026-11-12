@@ -1,16 +1,10 @@
-from datetime import datetime
-
 import httpx
 import pytest
 
 from app.services.whatsapp_notifier import WhatsAppNotifier
 from app.services.whatsapp_report_service import (
     ERROR_CATEGORIES,
-    JAKARTA_TIMEZONE,
     classify_error,
-    format_cctv_report,
-    next_report_time,
-    resolve_stream_name,
 )
 
 
@@ -185,61 +179,3 @@ def test_timeout_errors_explain_connection_and_delivery_uncertainty():
 )
 def test_classify_error_into_six_report_categories(title, raw_message, expected):
     assert classify_error(title, None, raw_message) == expected
-
-
-def test_report_groups_camera_names_by_error_without_status_lists():
-    report = format_cctv_report(
-        [
-            (
-                "Kamera Lobby",
-                "Batas Waktu Koneksi Kamera Habis (Timeout)",
-                "timeout",
-                "",
-            ),
-            ("Kamera Lobby", "Timeout", "timeout again", ""),
-            ("Kamera Jalan", "unknown", "unknown", ""),
-        ],
-        datetime(2026, 11, 2, 5, 0, tzinfo=JAKARTA_TIMEZONE),
-    )
-
-    assert "Daftar CCTV Aktif" not in report
-    assert "Daftar CCTV Mati/Down" not in report
-    assert "Total CCTV ONLINE" not in report
-    assert "Total CCTV OFFLINE" not in report
-    assert "*1. Batas Waktu Koneksi Kamera Habis (Timeout)*" in report
-    assert "1. Kamera Lobby" in report
-    assert report.count("Kamera Lobby") == 1
-    assert "*6. Lainnya*" in report
-    assert "Kamera Jalan" in report
-
-
-def test_report_resolves_unique_partial_stream_id_regardless_of_status():
-    stream_names = {
-        ("cctv-uptmalioboro", "UPTMalio11_TerangBulan.stream"):
-            "UPTMalio11_TerangBulan.stream ",
-    }
-
-    assert resolve_stream_name(
-        "cctv-uptmalioboro", "UPTMalio11_Te", stream_names
-    ) == "UPTMalio11_TerangBulan.stream"
-
-
-def test_report_keeps_ambiguous_partial_stream_id_instead_of_guessing():
-    stream_names = {
-        ("cctv-kominfogk", "S4BudeganBarat.stream"): "S4BudeganBarat.stream",
-        ("cctv-kominfogk", "S4BudeganDome.stream"): "S4BudeganDome.stream",
-        ("cctv-kominfogk", "S4BudeganTimur.stream"): "S4BudeganTimur.stream",
-    }
-
-    assert resolve_stream_name("cctv-kominfogk", "S4Bu", stream_names) == "S4Bu"
-
-
-def test_next_report_time_uses_six_and_twenty_wib():
-    morning = datetime(2026, 11, 2, 5, 0, tzinfo=JAKARTA_TIMEZONE)
-    evening = datetime(2026, 11, 2, 19, 30, tzinfo=JAKARTA_TIMEZONE)
-    after_evening = datetime(2026, 11, 2, 21, 0, tzinfo=JAKARTA_TIMEZONE)
-
-    assert next_report_time(morning).hour == 6
-    assert next_report_time(evening).hour == 20
-    assert next_report_time(after_evening).day == 3
-    assert next_report_time(after_evening).hour == 6

@@ -92,14 +92,13 @@
             }
         },
 
-        async sendFilteredErrorsToWhatsApp() {
-            const total = Number(this.counts.ERROR || 0);
+        async sendCctvIncidentReportToWhatsApp() {
             if (!this.whatsappConfigured) {
                 this.whatsappFeedback = 'WhatsApp belum aktif atau konfigurasinya belum lengkap.';
                 this.whatsappFeedbackError = true;
                 return;
             }
-            if (!window.confirm(`Kirim laporan WhatsApp sekarang dengan ${total} log ERROR sesuai filter?`)) {
+            if (!window.confirm('Kirim rekapitulasi log ERROR seluruh aplikasi AMS? Laporan mencakup semua aplikasi dan tidak mengikuti filter histori log.')) {
                 return;
             }
 
@@ -107,14 +106,7 @@
             this.whatsappFeedbackError = false;
             this.whatsappFeedback = 'Memulai pengiriman WhatsApp...';
             try {
-                const params = new URLSearchParams();
-                if (this.date && this.date !== 'ALL') params.append('date', this.date);
-                if (this.streamId && this.streamId !== 'ALL') params.append('stream_id', this.streamId);
-                if (this.appName && this.appName !== 'ALL') params.append('app_name', this.appName);
-                if (this.searchQuery.trim()) params.append('q', this.searchQuery.trim());
-                if (this.fingerprintFilter) params.append('fingerprint', this.fingerprintFilter);
-
-                const startResponse = await fetch(`/api/logs/whatsapp/bulk?${params.toString()}`, { method: 'POST' });
+                const startResponse = await fetch('/api/logs/whatsapp/bulk', { method: 'POST' });
                 const startData = await startResponse.json();
                 if (!startResponse.ok) throw new Error(startData.detail || 'Gagal memulai pengiriman WhatsApp.');
 
@@ -130,6 +122,11 @@
 
                 if (job.status === 'failed') {
                     throw new Error(job.message || 'Pengiriman WhatsApp gagal.');
+                }
+                if (job.message) {
+                    this.whatsappFeedback = job.message;
+                    this.whatsappFeedbackError = false;
+                    return;
                 }
                 const errorDetails = (job.errors || []).join(' ');
                 this.whatsappFeedback = `Pengiriman selesai: ${job.sent} berhasil, ${job.failed} gagal dari ${job.total} pesan.${errorDetails ? ` Penyebab: ${errorDetails}` : ''}`;
@@ -488,15 +485,14 @@
                         <span>Ekspor CSV</span>
                     </button>
                     <button type="button"
-                            @click="sendFilteredErrorsToWhatsApp()"
+                            @click="sendCctvIncidentReportToWhatsApp()"
                             :disabled="sendingWhatsAppBulk || !whatsappConfigured"
-                            :title="whatsappConfigured ? 'Kirim laporan sekarang tanpa menunggu jadwal otomatis' : 'WhatsApp belum aktif atau konfigurasinya belum lengkap'"
+                            :title="whatsappConfigured ? 'Kirim rekapitulasi log ERROR seluruh aplikasi AMS' : 'WhatsApp belum aktif atau konfigurasinya belum lengkap'"
                             class="inline-flex items-center gap-1.5 px-3 py-1 text-[11px] font-medium rounded border border-emerald-300 bg-[var(--bg-surface)] hover:bg-emerald-50 text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer">
                         <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                             <path d="M20.52 3.48A11.8 11.8 0 0 0 12.1 0C5.55 0 .22 5.32.22 11.87c0 2.1.55 4.15 1.6 5.96L.12 24l6.33-1.66a11.9 11.9 0 0 0 5.65 1.44h.01c6.55 0 11.88-5.33 11.88-11.88 0-3.17-1.24-6.15-3.47-8.42ZM12.1 21.76h-.01a9.9 9.9 0 0 1-5.04-1.38l-.36-.21-3.76.99 1-3.66-.23-.38a9.84 9.84 0 0 1-1.51-5.25c0-5.46 4.45-9.9 9.92-9.9a9.84 9.84 0 0 1 7.01 2.9 9.84 9.84 0 0 1 2.9 7.02c0 5.47-4.45 9.91-9.92 9.91Zm5.44-7.42c-.3-.15-1.77-.87-2.04-.97-.28-.1-.48-.15-.68.15-.2.3-.78.97-.96 1.17-.18.2-.35.22-.65.07-.3-.15-1.27-.47-2.42-1.5-.9-.8-1.5-1.78-1.68-2.08-.18-.3-.02-.46.13-.61.13-.13.3-.35.45-.52.15-.18.2-.3.3-.5.1-.2.05-.38-.02-.53-.08-.15-.68-1.63-.93-2.23-.24-.58-.49-.5-.68-.51h-.58c-.2 0-.53.08-.8.38-.28.3-1.05 1.02-1.05 2.49s1.08 2.89 1.23 3.09c.15.2 2.12 3.24 5.14 4.54.72.31 1.28.5 1.72.64.73.23 1.4.2 1.93.12.59-.09 1.77-.72 2.02-1.42.25-.7.25-1.3.18-1.42-.08-.13-.28-.2-.58-.35Z"/>
                         </svg>
                         <span x-text="sendingWhatsAppBulk ? 'Mengirim...' : (whatsappConfigured ? 'Kirim Laporan Sekarang' : 'WhatsApp belum aktif')"></span>
-                        <span x-show="whatsappConfigured" class="font-mono" x-text="`(${counts.ERROR || 0})`"></span>
                     </button>
                 </div>
             </template>

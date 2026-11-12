@@ -31,6 +31,11 @@ Dashboard monitoring CCTV operasional untuk operator non-teknis yang terintegras
      - Metrik live (bitrate, speed, viewer) diperbarui real-time via SSE ketika drawer terbuka.
      - Operasi bersifat strictly read-only untuk keamanan data produksi.
 
+4. **Pelacakan Insiden CCTV Berkelanjutan**:
+   - Incident dibuka dari status non-live AMS atau log ERROR terbaru, diidentifikasi dengan pasangan `app_name` dan `stream_id`.
+   - Waktu awal gangguan disimpan di MySQL dan tidak direset saat jenis error berubah; incident ditutup ketika stream kembali normal.
+   - Riwayat perubahan incident dan notifikasi tetap disimpan di MySQL.
+
 ---
 
 ## Tech Stack
@@ -57,6 +62,7 @@ AMS/
 │   │   ├── application_service.py # Agregasi stream & masking RTSP
 │   │   ├── log_service.py       # Query log, deduplikasi, dan ekspor CSV
 │   │   ├── health_service.py    # Algoritma evaluasi kesehatan CCTV
+│   │   ├── cctv_incident_service.py # Incident durasi gangguan dan WhatsApp
 │   │   └── auth_service.py      # Autentikasi aplikasi & hash password
 │   ├── ingest/
 │   │   └── log_ingestor.py      # Background poller log, parser, dedupe
@@ -134,9 +140,9 @@ Snapshot dashboard dan ringkasan aplikasi memakai cache singkat agar request par
 
 ### Notifikasi Error CCTV ke WhatsApp
 
-Laporan otomatis dikirim **dua kali sehari pada pukul 06.00 dan 20.00 WIB** sebagai satu pesan gabungan, bukan satu pesan untuk setiap error. Laporan berisi nama CCTV dengan error dalam enam kategori, berdasarkan log `ERROR` 12 jam terakhir. Kategori error adalah timeout, inisialisasi stream gagal, gagal membuka stream, alamat stream tidak ditemukan, autentikasi ditolak, dan lainnya.
+Laporan WhatsApp Green API merangkum seluruh aplikasi yang ditemukan pada snapshot stream, riwayat sinkronisasi, atau log MySQL. Setiap aplikasi ditampilkan sebagai bermasalah atau normal. CCTV dikelompokkan berdasarkan `app_name` dan `stream_id`, dengan seluruh alasan error unik digabung dalam satu entri; `stream_id` kosong atau placeholder ditampilkan terpisah sebagai log yang belum teridentifikasi. Ringkasan akhir memuat jumlah semua aplikasi, aplikasi bermasalah/normal, dan CCTV unik bermasalah. Data diambil dari seluruh log `ERROR` yang masih tersimpan di MySQL.
 
-Di halaman Logs, tombol **Kirim WhatsApp** di samping **Ekspor CSV** juga mengirim satu laporan gabungan dari log `ERROR` yang cocok dengan filter aktif.
+Di halaman Logs, tombol **Kirim Laporan Sekarang** mengirim satu rekap gabungan. Laporan manual mengabaikan filter halaman log, dan menggunakan agregasi serta template yang sama dengan pengiriman otomatis saat monitor mengirim pembaruan laporan.
 Jika laporan melebihi batas panjang pesan WhatsApp, laporan dikirim sebagai beberapa pesan pada batas antarbaris agar nama stream tidak terpotong.
 
 Aktifkan Green API melalui `.env`:
@@ -160,6 +166,8 @@ Simpan token hanya di `.env` dan jangan commit nilainya. Jika token pernah dilet
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 Buka browser di: `http://localhost:8000`
+
+Variabel `CCTV_INCIDENT_CHECK_INTERVAL_SECONDS` (default 60), `CCTV_INCIDENT_REPEAT_INTERVAL_SECONDS` (default 21600), `CCTV_INCIDENT_RECENT_ERROR_SECONDS` (default 300), dan `CCTV_INCIDENT_MANUAL_COOLDOWN_SECONDS` (default 300) mengatur pemindaian snapshot MySQL, interval pembaruan otomatis, jendela log ERROR aktif, serta jeda anti-spam pengiriman manual. Monitor tidak menambah polling AMS; ia memakai snapshot stream sukses yang sudah disimpan scheduler sinkronisasi.
 
 Default kredensial login dashboard:
 - Admin: `admin` / `admin12345`
